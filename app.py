@@ -423,7 +423,7 @@ def main():
                 if uploaded_file is not None:
                     try:
                         import pandasai as pai
-                        df = pd.read_csv(uploaded_file)
+                        df = pai.read_csv(uploaded_file)
                         st.session_state.df = df
                         st.success(f"✅ File uploaded! {len(df)} rows loaded.")
                     except Exception as e:
