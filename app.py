@@ -359,6 +359,170 @@ def display_data_summary(df):
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
+def process_chat_response(result, query):
+    """Process and format PandasAI chat responses"""
+    try:
+        import pandas as pd
+        import re
+        
+        # If result is already a DataFrame, display it properly
+        if isinstance(result, pd.DataFrame):
+            return format_dataframe_response(result)
+        
+        # If result is a string that looks like tabular data
+        if isinstance(result, str):
+            # Check if it contains structured data that can be parsed
+            if detect_tabular_data(result):
+                df_result = parse_string_to_dataframe(result)
+                if df_result is not None:
+                    return format_dataframe_response(df_result)
+            
+            # Check if it's a number or simple answer
+            if is_simple_answer(result):
+                return format_simple_answer(result, query)
+            
+            # Otherwise return as formatted text
+            return format_text_response(result)
+        
+        # For other types, convert to string
+        return str(result)
+        
+    except Exception as e:
+        return f"Result: {str(result)}"
+
+def detect_tabular_data(text):
+    """Detect if text contains tabular data"""
+    # Look for patterns like "0 3522.0 Asif Raza_3522"
+    pattern = r'\d+\s+[\d.]+\s+\w+'
+    matches = re.findall(pattern, text)
+    return len(matches) >= 2  # At least 2 rows
+
+def parse_string_to_dataframe(text):
+    """Parse string data into a DataFrame"""
+    try:
+        import pandas as pd
+        
+        # Split into lines and parse
+        lines = text.strip().split('\n')
+        data = []
+        
+        for line in lines:
+            if line.strip():
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    # Assuming format: index, id, name
+                    try:
+                        index = int(parts[0])
+                        rider_id = float(parts[1])
+                        name = ' '.join(parts[2:])  # Join remaining parts as name
+                        data.append({'Index': index, 'Rider ID': rider_id, 'Rider Name': name})
+                    except (ValueError, IndexError):
+                        continue
+        
+        if data:
+            return pd.DataFrame(data)
+        return None
+        
+    except Exception:
+        return None
+
+def format_dataframe_response(df):
+    """Format DataFrame as HTML table"""
+    try:
+        # Create a nice HTML table
+        html_table = df.to_html(
+            index=False, 
+            classes='dataframe-table',
+            table_id='result-table',
+            escape=False
+        )
+        
+        # Add custom styling
+        styled_table = f"""
+        <div style="margin: 20px 0;">
+            <style>
+                .dataframe-table {{
+                    border-collapse: collapse;
+                    margin: 25px 0;
+                    font-size: 0.9em;
+                    min-width: 400px;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+                }}
+                .dataframe-table thead tr {{
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: #ffffff;
+                    text-align: left;
+                }}
+                .dataframe-table th,
+                .dataframe-table td {{
+                    padding: 12px 15px;
+                    border: none;
+                }}
+                .dataframe-table tbody tr {{
+                    border-bottom: 1px solid #dddddd;
+                }}
+                .dataframe-table tbody tr:nth-of-type(even) {{
+                    background-color: #f3f3f3;
+                }}
+                .dataframe-table tbody tr:hover {{
+                    background-color: #f1f1f1;
+                    transform: scale(1.02);
+                    transition: all 0.3s ease;
+                }}
+            </style>
+            {html_table}
+        </div>
+        """
+        return styled_table
+        
+    except Exception:
+        return df.to_string()
+
+def format_simple_answer(result, query):
+    """Format simple numerical or text answers"""
+    try:
+        # Check if it's a number
+        try:
+            num_result = float(result)
+            return f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                        color: white; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                <h3 style="margin: 0; font-size: 1.5em;">{num_result:,.2f}</h3>
+                <p style="margin: 5px 0 0 0; opacity: 0.9;">Answer to: {query}</p>
+            </div>
+            """
+        except ValueError:
+            pass
+        
+        # Format as text answer
+        return f"""
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                    color: white; padding: 15px; border-radius: 10px; margin: 10px 0;">
+            <strong>Answer:</strong> {result}
+        </div>
+        """
+    except Exception:
+        return str(result)
+
+def format_text_response(text):
+    """Format plain text responses"""
+    return f"""
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; 
+                border-left: 4px solid #667eea; margin: 10px 0;">
+        {text}
+    </div>
+    """
+
+def is_simple_answer(result):
+    """Check if result is a simple answer (number or short text)"""
+    if isinstance(result, (int, float)):
+        return True
+    if isinstance(result, str) and len(result.split()) <= 10:
+        return True
+    return False
+
 def main():
     # Header
     st.markdown("""
@@ -527,25 +691,36 @@ def main():
                 
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
-                    # Add user message
-                    st.session_state.messages.append({"role": "user", "content": query})
-                    
-                    # Process query with PandasAI
-                    try:
-                        with st.spinner("🤖 Analyzing your data..."):
-                            import pandasai as pai
-                            result = st.session_state.df.chat(query)
+                            # Add user message
+                            st.session_state.messages.append({"role": "user", "content": query})
                             
-                            # Add agent response
-                            st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                            # Process query with PandasAI
+                            try:
+                                with st.spinner("🤖 Analyzing your data..."):
+                                    # Ensure we have a SmartDataframe
+                                    if not hasattr(st.session_state.df, 'chat'):
+                                        if hasattr(st.session_state.df, 'dataframe'):
+                                            pandas_df = st.session_state.df.dataframe
+                                        else:
+                                            pandas_df = st.session_state.df
+                                        st.session_state.df = pai.SmartDataframe(pandas_df)
+                                    
+                                    # Get response from PandasAI
+                                    result = st.session_state.df.chat(query)
+                                    
+                                    # Process and format the response
+                                    formatted_response = process_chat_response(result, query)
+                                    
+                                    # Add agent response
+                                    st.session_state.messages.append({"role": "assistant", "content": formatted_response})
+                                    
+                                    # Rerun to update chat display
+                                    st.rerun()
                             
-                            # Rerun to update chat display
-                            st.rerun()
-                    
-                    except Exception as e:
-                        error_msg = f"Sorry, I encountered an error: {str(e)}"
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                        st.rerun()
+                            except Exception as e:
+                                error_msg = f"Sorry, I encountered an error: {str(e)}"
+                                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                                st.rerun()
             
             with tab2:
                 display_data_summary(st.session_state.df)
