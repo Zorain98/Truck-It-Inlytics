@@ -125,12 +125,6 @@ Choose your data source:
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
-## 🎨 Screenshots
-
-### Dashboard Overview
-![Dashboard](https://via.placeholder.com/800x400/667eea/ffffff?text=Beautiful800x400/f093fb/ffffff?text=Conversationalizations
-![Charts](https://via.placeholder.com/800x400/a8edea/333333?text=Interactive
-
 ### Environment Variables
 ```bash
 OPENAI_API_KEY=your_openai_key_here
