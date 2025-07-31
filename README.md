@@ -1,6 +1,6 @@
 # 🚛 Truck It Inlytics - AI-Powered Data Analytics Chatbot
 
-[![Streamlit](https://img.shields.io/tps://img](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white is a cutting-edge, AI-powered data analytics chatbot built with Streamlit and PandasAI. Transform your data analysis workflow with natural language queries, stunning visualizations, and intelligent insights—all wrapped in a beautiful, user-friendly interface.
+An AI-powered data analytics chatbot built with Streamlit and PandasAI. Transform your data analysis workflow with natural language queries, stunning visualizations, and intelligent insights—all wrapped in a beautiful, user-friendly interface.
 
 ### ✨ What Makes It Special?
 
