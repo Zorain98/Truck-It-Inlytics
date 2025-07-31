@@ -139,17 +139,40 @@ if 'api_key' not in st.session_state:
 def initialize_pandasai():
     """Initialize PandasAI with the selected LLM"""
     try:
-        import pandasai as pai
-        
         if st.session_state.llm_type == "OpenAI":
-            from pandasai_openai.openai import OpenAI
-            llm = OpenAI(api_key=st.session_state.api_key)
+            from pandasai.llm import OpenAI
+            llm = OpenAI(api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
-            from langchain_groq import ChatGroq
-            llm = ChatGroq(
-                model="llama-3.3-70b-versatile",
-                api_key=st.session_state.api_key,
-            )
+            # Use PandasAI's built-in LLM wrapper for external APIs
+            from pandasai.llm import LLM
+            
+            class GroqLLM(LLM):
+                def __init__(self, api_key):
+                    self.api_key = api_key
+                    self._client = None
+                
+                @property
+                def client(self):
+                    if self._client is None:
+                        import groq
+                        self._client = groq.Groq(api_key=self.api_key)
+                    return self._client
+                
+                def call(self, instruction, value):
+                    try:
+                        response = self.client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": instruction},
+                                {"role": "user", "content": value}
+                            ],
+                            temperature=0.1
+                        )
+                        return response.choices[0].message.content
+                    except Exception as e:
+                        return f"Error: {str(e)}"
+            
+            llm = GroqLLM(st.session_state.api_key)
         
         pai.config.set({"llm": llm})
         st.session_state.agent_initialized = True
@@ -157,7 +180,6 @@ def initialize_pandasai():
     except Exception as e:
         st.error(f"Error initializing agent: {str(e)}")
         return False
-
 def load_data_from_redash(api_url):
     """Load data from Redash API URL using PandasAI"""
     try:
