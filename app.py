@@ -141,7 +141,7 @@ def initialize_pandasai():
     try:
         import pandasai as pai
         if st.session_state.llm_type == "OpenAI":
-            from pandasai.llm import OpenAI
+            from pandasai_openai.openai import OpenAI
             llm = OpenAI(api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
             # Use PandasAI's built-in LLM wrapper for external APIs
