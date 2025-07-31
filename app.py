@@ -32,7 +32,7 @@ st.markdown("""
     }
     
     .metric-card {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%);
         padding: 20px;
         border-radius: 15px;
         color: white;
@@ -75,6 +75,7 @@ st.markdown("""
     
     .upload-section {
         background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%);
+        color: white;
         padding: 20px;
         border-radius: 15px;
         margin: 20px 0;
@@ -90,13 +91,13 @@ st.markdown("""
     }
     
     .human-message {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #127555 0%, #099773 100%);
         color: white;
         margin-left: 20px;
     }
     
     .agent-message {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: linear-gradient(135deg, #000438 0%, #00458E 100%);
         color: white;
         margin-right: 20px;
     }
@@ -113,12 +114,12 @@ st.markdown("""
     }
     
     .human-avatar {
-        background: #4CAF50;
+        background: white;
         color: white;
     }
     
     .agent-avatar {
-        background: #FF9800;
+        background: white;
         color: white;
     }
 </style>
@@ -519,7 +520,7 @@ def main():
                     else:
                         st.markdown(f"""
                         <div class="chat-message agent-message">
-                            <div class="avatar agent-avatar">🤖</div>
+                            <div class="avatar agent-avatar">👾</div>
                             <div>{message["content"]}</div>
                         </div>
                         """, unsafe_allow_html=True)
