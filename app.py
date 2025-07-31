@@ -139,6 +139,7 @@ if 'api_key' not in st.session_state:
 def initialize_pandasai():
     """Initialize PandasAI with the selected LLM"""
     try:
+        import pandasai as pai
         if st.session_state.llm_type == "OpenAI":
             from pandasai.llm import OpenAI
             llm = OpenAI(api_token=st.session_state.api_key)
