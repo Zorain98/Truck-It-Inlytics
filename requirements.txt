@@ -89,6 +89,7 @@ jupyterlab_server==2.24.0
 keras==3.10.0
 keyring==24.3.1
 kiwisolver==1.4.8
+lanchain==0.3.27
 langchain-core==0.3.71
 langchain-groq==0.3.6
 langchain-openai==0.3.28
@@ -218,3 +219,4 @@ widgetsnbextension==4.0.8
 wrapt==1.17.2
 zipp==3.20.1
 zstandard==0.23.0
+
