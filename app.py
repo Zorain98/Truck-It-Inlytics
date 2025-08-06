@@ -405,6 +405,106 @@ def try_show_dataframe(query, df):
         return display_df
     return None
 
+import re
+import pandas as pd
+import streamlit as st
+
+def handle_pandasai_response(result):
+    """
+    Intelligently processes the response from PandasAI to format it correctly for Streamlit.
+    This function will create styled tables, metric cards, or formatted text based on the input.
+    """
+
+    # If the result is already a pandas DataFrame, format it as a styled HTML table.
+    if isinstance(result, pd.DataFrame):
+        return create_styled_table(result, "Query Result")
+
+    # If the result is a number (integer or float), display it in a visually appealing metric card.
+    if isinstance(result, (int, float)):
+        return create_metric_card(f"{result:,.2f}", "Result")
+
+    # If the result is a string, attempt to parse it. This is the key part for your issue.
+    if isinstance(result, str):
+        # This regex is specifically designed to parse the "ColumnName 0 Value1 1 Value2..." format
+        # It looks for a word (column name) followed by index-value pairs.
+        match = re.match(r'(\w+)\s+((\d+\s+.*?)(?=\s\d+|$)\s*)+', result)
+        if match:
+            try:
+                column_name = match.group(1)
+                # Find all "index value" pairs in the rest of the string
+                item_matches = re.findall(r'\d+\s(.*?)(?=\s\d+|$)', result)
+                if item_matches:
+                    # Create a DataFrame from the parsed data
+                    df = pd.DataFrame({column_name: [item.strip() for item in item_matches]})
+                    return create_styled_table(df, f"Data for: {column_name}")
+            except Exception:
+                # If parsing fails for any reason, fall back to displaying the raw text.
+                pass
+
+        # If the string doesn't match the table format, display it as a simple text answer.
+        return create_text_answer(result)
+
+    # For any other data type, convert to a string and display as a text answer.
+    return create_text_answer(str(result))
+
+# Helper function to create a styled HTML table
+def create_styled_table(df, title="Results"):
+    """Converts a DataFrame to a styled HTML table."""
+    if df.empty:
+        return "<p>No results found.</p>"
+    # Use pandas to_html and add a custom class for styling
+    table_html = df.to_html(index=False, classes='styled-table', escape=False)
+    # CSS for the table
+    style = """
+    <style>
+        .styled-table {
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 1em;
+            font-family: 'Arial', sans-serif;
+            min-width: 400px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .styled-table thead tr {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            text-align: left;
+        }
+        .styled-table th, .styled-table td {
+            padding: 12px 15px;
+            text-align: left;
+        }
+        .styled-table tbody tr {
+            border-bottom: 1px solid #dddddd;
+        }
+        .styled-table tbody tr:nth-of-type(even) {
+            background-color: #f3f3f3;
+        }
+        .styled-table tbody tr:last-of-type {
+            border-bottom: 2px solid #667eea;
+        }
+    </style>
+    """
+    return f"<h4>{title}</h4>{style}{table_html}"
+
+# Helper function to create a styled metric card for numbers
+def create_metric_card(value, label):
+    """Creates a styled card for displaying single metrics."""
+    return f"""
+    <div style="background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%); color: white; padding: 25px; border-radius: 15px; text-align: center;">
+        <h3 style="margin: 0; font-size: 1.5em; opacity: 0.8;">{label}</h3>
+        <p style="margin: 10px 0 0 0; font-size: 2.5em; font-weight: bold;">{value}</p>
+    </div>
+    """
+
+# Helper function to format simple text answers
+def create_text_answer(text):
+    """Formats a plain text response in a styled box."""
+    return f"<div style='padding: 15px; border-radius: 10px; background-color: #f0f2f6; border-left: 5px solid #667eea;'>{text}</div>"
+
+
 
 def main():
     # Header
@@ -575,30 +675,25 @@ def main():
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
                     st.session_state.messages.append({"role": "user", "content": query})
-                    try:
-                        with st.spinner("🤖 Analyzing your data..."):
+                    
+                    with st.spinner("🤖 Analyzing your data..."):
+                        try:
                             import pandasai as pai
+                            # Get the raw result from PandasAI
                             result = st.session_state.df.chat(query)
-                            pandas_df = st.session_state.df.dataframe if hasattr(st.session_state.df, "dataframe") else st.session_state.df
-
-                            # Try showing the actual dataframe for table-like queries or responses
-                            display_df = try_show_dataframe(query, pandas_df)
-                            if display_df is not None and not display_df.empty:
-                                st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": display_df.to_markdown(index=False)
-                                })
-                            else:
-                                # Otherwise, do as before (string, post-process with LLM if you like)
-                                st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": str(result)
-                                })
+                            
+                            # Process the result using the new handler function
+                            formatted_response = handle_pandasai_response(result)
+                            
+                            # Add the beautifully formatted response to the chat history
+                            st.session_state.messages.append({"role": "assistant", "content": formatted_response})
+                            
+                        except Exception as e:
+                            error_msg = f"Sorry, I encountered an error: {str(e)}"
+                            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    # Rerun the app to display the new message immediately
                             st.rerun()
-                    except Exception as e:
-                        error_msg = f"Sorry, I encountered an error: {str(e)}"
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                        st.rerun()
+
 
             
             with tab2:
