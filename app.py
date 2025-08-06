@@ -11,6 +11,7 @@ import json
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
+import re
 
 # Page config
 st.set_page_config(
@@ -385,6 +386,25 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     response = llm.invoke(prompt)
     return response.content
 
+def try_show_dataframe(query, df):
+    # Lower-case query for easy matching
+    query_lower = query.lower()
+    
+    # Try basic table requests
+    keywords = ["show", "list", "table", "display", "top", "head"]
+    if any(word in query_lower for word in keywords):
+        # Try to extract relevant columns from the query
+        possible_cols = []
+        for col in df.columns:
+            if col.lower() in query_lower:
+                possible_cols.append(col)
+        if possible_cols:
+            display_df = df[possible_cols].head(20)
+        else:
+            display_df = df.head(20)
+        return display_df
+    return None
+
 
 def main():
     # Header
@@ -559,26 +579,21 @@ def main():
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
                             result = st.session_state.df.chat(query)
-                            
-                            # If PandasAI returns a DataFrame, render with st.dataframe directly
-                            import pandasai as pai
-                            if isinstance(result, pd.DataFrame):
-                                # Instead of converting to string, show as table via Markdown
+                            pandas_df = st.session_state.df.dataframe if hasattr(st.session_state.df, "dataframe") else st.session_state.df
+
+                            # Try showing the actual dataframe for table-like queries or responses
+                            display_df = try_show_dataframe(query, pandas_df)
+                            if display_df is not None and not display_df.empty:
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": result.head(20).to_markdown(index=False)
+                                    "content": display_df.to_markdown(index=False)
                                 })
-                            elif isinstance(result, str) and len(result) > 30:
-                                # If it's a string and may be tabular or verbose, use post-processing with LLM
-                                formatted = reformat_output_with_llm(
-                                    raw_response=result,
-                                    user_query=query,
-                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
-                                )
-                                st.session_state.messages.append({"role": "assistant", "content": formatted})
                             else:
-                                # Otherwise, fallback to just showing the response
-                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                                # Otherwise, do as before (string, post-process with LLM if you like)
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": str(result)
+                                })
                             st.rerun()
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
@@ -599,4 +614,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
