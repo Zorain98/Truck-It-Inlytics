@@ -561,7 +561,7 @@ def main():
                             result = st.session_state.df.chat(query)
                             
                             # If PandasAI returns a DataFrame, render with st.dataframe directly
-                            import pandas as pd
+                            import pandasai as pai
                             if isinstance(result, pd.DataFrame):
                                 # Instead of converting to string, show as table via Markdown
                                 st.session_state.messages.append({
@@ -599,3 +599,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
