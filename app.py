@@ -362,189 +362,28 @@ def display_data_summary(df):
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
-def handle_pandasai_response(result, query, smart_df):
-    """Handle PandasAI responses and format them properly"""
-    try:
-        import pandas as pd
-        
-        # Get the underlying pandas DataFrame
-        if hasattr(smart_df, 'dataframe'):
-            df = smart_df.dataframe
-        else:
-            df = smart_df
-        
-        # Analyze the query to determine what kind of response to give
-        query_lower = query.lower()
-        
-        # If asking to show/display/list data
-        if any(word in query_lower for word in ['show', 'display', 'list', 'all', 'first', 'top']):
-            # Extract number if specified (like "show first 5", "top 10")
-            import re
-            numbers = re.findall(r'\d+', query)
-            limit = int(numbers[0]) if numbers else 10
-            
-            # Get the data to display
-            display_df = df.head(limit)
-            
-            return create_styled_table(display_df, f"Showing {len(display_df)} records")
-        
-        # If asking for count/total/number
-        elif any(word in query_lower for word in ['count', 'total', 'number', 'how many']):
-            count = len(df)
-            return create_metric_card(f"{count:,}", "Total Records", "📊")
-        
-        # If asking for specific columns or filtering
-        elif any(word in query_lower for word in ['rider', 'name', 'id']):
-            # Try to show relevant columns
-            relevant_cols = []
-            if 'rider' in query_lower or 'id' in query_lower:
-                relevant_cols.extend([col for col in df.columns if 'id' in col.lower() or 'rider' in col.lower()])
-            if 'name' in query_lower:
-                relevant_cols.extend([col for col in df.columns if 'name' in col.lower()])
-            
-            if relevant_cols:
-                # Remove duplicates while preserving order
-                relevant_cols = list(dict.fromkeys(relevant_cols))
-                display_df = df[relevant_cols].head(10)
-                return create_styled_table(display_df, f"Showing {relevant_cols} data")
-        
-        # If the result looks like it should be a table but came as string
-        if isinstance(result, str) and any(char.isdigit() for char in result):
-            # Try to parse and create a proper table
-            parsed_df = parse_result_to_dataframe(result, df)
-            if parsed_df is not None:
-                return create_styled_table(parsed_df, "Query Results")
-        
-        # For simple answers (numbers, short text)
-        if isinstance(result, (int, float)):
-            return create_metric_card(f"{result:,.2f}", query, "🔢")
-        elif isinstance(result, str) and len(result.split()) <= 20:
-            return create_text_answer(result, query)
-        
-        # Default: return as formatted text
-        return create_text_answer(str(result), query)
-        
-    except Exception as e:
-        return f"<div style='color: red;'>Error processing response: {str(e)}</div>"
-
-def parse_result_to_dataframe(result_string, original_df):
-    """Try to parse string result back to DataFrame"""
-    try:
-        import pandas as pd
-        import re
-        
-        # If the string contains column names from original DataFrame
-        lines = result_string.strip().split('\n')
-        data = []
-        
-        for line in lines:
-            if line.strip():
-                # Try to parse each line
-                parts = re.split(r'\s+', line.strip())
-                if len(parts) >= 2:
-                    try:
-                        # Assuming first part is index, second is numeric, rest is text
-                        index_val = parts[0]
-                        if index_val.isdigit():
-                            row_data = {}
-                            
-                            # Map to original DataFrame columns if possible
-                            if len(parts) >= 3:
-                                row_data[original_df.columns[0]] = parts[1] if len(original_df.columns) > 0 else parts[1]
-                                if len(original_df.columns) > 1:
-                                    row_data[original_df.columns[1]] = ' '.join(parts[2:])
-                            
-                            if row_data:
-                                data.append(row_data)
-                    except (ValueError, IndexError):
-                        continue
-        
-        if data:
-            return pd.DataFrame(data)
-        return None
-        
-    except Exception:
-        return None
-
-def create_styled_table(df, title="Results"):
-    """Create a beautifully styled HTML table"""
-    if df.empty:
-        return f"<div style='text-align: center; color: #666;'>No data to display</div>"
-    
-    # Create HTML table with custom styling
-    html_table = df.to_html(
-        index=False,
-        classes='result-table',
-        escape=False,
-        table_id='data-table'
+def reformat_output_with_llm(raw_response, user_query, openai_api_key):
+    # Use the OpenAI model from LangChain to turn string output into a table or concise summary.
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=(
+                "You are a data assistant. "
+                "When given a raw text output (possibly with table data), "
+                "format it into a readable Markdown table or, if a table is not relevant, "
+                "give a concise, well-organized summary. "
+                "Be accurate and relevant to the input query."
+            )),
+            HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
+        ]
     )
-    
-    return f"""
-    <div style="margin: 15px 0;">
-        <h4 style="color: #667eea; margin-bottom: 10px; font-weight: 600;">{title}</h4>
-        <style>
-            .result-table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin: 15px 0;
-                font-size: 14px;
-                border-radius: 8px;
-                overflow: hidden;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }}
-            .result-table thead tr {{
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                text-align: left;
-                font-weight: 600;
-            }}
-            .result-table th,
-            .result-table td {{
-                padding: 12px 15px;
-                border: none;
-                text-align: left;
-            }}
-            .result-table tbody tr {{
-                border-bottom: 1px solid #f0f0f0;
-                transition: background-color 0.3s ease;
-            }}
-            .result-table tbody tr:nth-of-type(even) {{
-                background-color: #f8f9fa;
-            }}
-            .result-table tbody tr:hover {{
-                background-color: #e3f2fd;
-                transform: translateY(-1px);
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }}
-        </style>
-        {html_table}
-        <small style="color: #666; font-style: italic;">Showing {len(df)} row(s)</small>
-    </div>
-    """
-
-def create_metric_card(value, label, icon="📊"):
-    """Create a metric card for numerical results"""
-    return f"""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                color: white; padding: 20px; border-radius: 12px; 
-                text-align: center; margin: 15px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-        <div style="font-size: 2.5em; margin-bottom: 5px;">{icon}</div>
-        <div style="font-size: 2.2em; font-weight: bold; margin: 10px 0;">{value}</div>
-        <div style="font-size: 1.1em; opacity: 0.9;">{label}</div>
-    </div>
-    """
-
-def create_text_answer(text, query):
-    """Create a formatted text answer"""
-    return f"""
-    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
-                color: white; padding: 20px; border-radius: 12px; margin: 15px 0;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-        <div style="font-weight: 600; margin-bottom: 10px; font-size: 1.1em;">Response:</div>
-        <div style="font-size: 1.1em;">{text}</div>
-    </div>
-    """
-
+    llm = ChatOpenAI(
+        model="gpt-3.5-turbo",
+        api_key=openai_api_key,
+        temperature=0.1,
+        # Optionally, set max_tokens=512 or similar
+    )
+    response = llm.invoke(prompt)
+    return response.content
 
 def main():
     # Header
@@ -714,37 +553,37 @@ def main():
                 
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
-                    # Add user message
                     st.session_state.messages.append({"role": "user", "content": query})
-                    
-                    # Process query with PandasAI
                     try:
-                        import pandasai as pai
                         with st.spinner("🤖 Analyzing your data..."):
-                            # Ensure we have a SmartDataframe
-                            if not hasattr(st.session_state.df, 'chat'):
-                                if hasattr(st.session_state.df, 'dataframe'):
-                                    pandas_df = st.session_state.df.dataframe
-                                else:
-                                    pandas_df = st.session_state.df
-                                st.session_state.df = pai.SmartDataframe(pandas_df)
-                            
-                            # Get response from PandasAI
+                            import pandasai as pai
                             result = st.session_state.df.chat(query)
                             
-                            # Instead of using the result directly, let's try to execute the query manually
-                            formatted_response = handle_pandasai_response(result, query, st.session_state.df)
-                            
-                            # Add agent response
-                            st.session_state.messages.append({"role": "assistant", "content": formatted_response})
-                            
-                            # Rerun to update chat display
+                            # If PandasAI returns a DataFrame, render with st.dataframe directly
+                            import pandas as pd
+                            if isinstance(result, pd.DataFrame):
+                                # Instead of converting to string, show as table via Markdown
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": result.head(20).to_markdown(index=False)
+                                })
+                            elif isinstance(result, str) and len(result) > 30:
+                                # If it's a string and may be tabular or verbose, use post-processing with LLM
+                                formatted = reformat_output_with_llm(
+                                    raw_response=result,
+                                    user_query=query,
+                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
+                                )
+                                st.session_state.messages.append({"role": "assistant", "content": formatted})
+                            else:
+                                # Otherwise, fallback to just showing the response
+                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
                             st.rerun()
-                    
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                         st.rerun()
+
 
             
             with tab2:
