@@ -11,7 +11,6 @@ import json
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
-import re
 
 # Page config
 st.set_page_config(
@@ -363,232 +362,188 @@ def display_data_summary(df):
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
-def reformat_output_with_llm(raw_response, user_query, openai_api_key):
-    # Use the OpenAI model from LangChain to turn string output into a table or concise summary.
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            SystemMessage(content=(
-                "You are a data assistant. "
-                "When given a raw text output (possibly with table data), "
-                "format it into a readable Markdown table or, if a table is not relevant, "
-                "give a concise, well-organized summary. "
-                "Be accurate and relevant to the input query."
-            )),
-            HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
-        ]
-    )
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
-        api_key=openai_api_key,
-        temperature=0.1,
-        # Optionally, set max_tokens=512 or similar
-    )
-    response = llm.invoke(prompt)
-    return response.content
-
-def try_show_dataframe(query, df):
-    # Lower-case query for easy matching
-    query_lower = query.lower()
-    
-    # Try basic table requests
-    keywords = ["show", "list", "table", "display", "top", "head"]
-    if any(word in query_lower for word in keywords):
-        # Try to extract relevant columns from the query
-        possible_cols = []
-        for col in df.columns:
-            if col.lower() in query_lower:
-                possible_cols.append(col)
-        if possible_cols:
-            display_df = df[possible_cols].head(20)
+def handle_pandasai_response(result, query, smart_df):
+    """Handle PandasAI responses and format them properly"""
+    try:
+        import pandas as pd
+        
+        # Get the underlying pandas DataFrame
+        if hasattr(smart_df, 'dataframe'):
+            df = smart_df.dataframe
         else:
-            display_df = df.head(20)
-        return display_df
-    return None
+            df = smart_df
+        
+        # Analyze the query to determine what kind of response to give
+        query_lower = query.lower()
+        
+        # If asking to show/display/list data
+        if any(word in query_lower for word in ['show', 'display', 'list', 'all', 'first', 'top']):
+            # Extract number if specified (like "show first 5", "top 10")
+            import re
+            numbers = re.findall(r'\d+', query)
+            limit = int(numbers[0]) if numbers else 10
+            
+            # Get the data to display
+            display_df = df.head(limit)
+            
+            return create_styled_table(display_df, f"Showing {len(display_df)} records")
+        
+        # If asking for count/total/number
+        elif any(word in query_lower for word in ['count', 'total', 'number', 'how many']):
+            count = len(df)
+            return create_metric_card(f"{count:,}", "Total Records", "📊")
+        
+        # If asking for specific columns or filtering
+        elif any(word in query_lower for word in ['rider', 'name', 'id']):
+            # Try to show relevant columns
+            relevant_cols = []
+            if 'rider' in query_lower or 'id' in query_lower:
+                relevant_cols.extend([col for col in df.columns if 'id' in col.lower() or 'rider' in col.lower()])
+            if 'name' in query_lower:
+                relevant_cols.extend([col for col in df.columns if 'name' in col.lower()])
+            
+            if relevant_cols:
+                # Remove duplicates while preserving order
+                relevant_cols = list(dict.fromkeys(relevant_cols))
+                display_df = df[relevant_cols].head(10)
+                return create_styled_table(display_df, f"Showing {relevant_cols} data")
+        
+        # If the result looks like it should be a table but came as string
+        if isinstance(result, str) and any(char.isdigit() for char in result):
+            # Try to parse and create a proper table
+            parsed_df = parse_result_to_dataframe(result, df)
+            if parsed_df is not None:
+                return create_styled_table(parsed_df, "Query Results")
+        
+        # For simple answers (numbers, short text)
+        if isinstance(result, (int, float)):
+            return create_metric_card(f"{result:,.2f}", query, "🔢")
+        elif isinstance(result, str) and len(result.split()) <= 20:
+            return create_text_answer(result, query)
+        
+        # Default: return as formatted text
+        return create_text_answer(str(result), query)
+        
+    except Exception as e:
+        return f"<div style='color: red;'>Error processing response: {str(e)}</div>"
 
-def smart_query_router(query, df):
-    """
-    Routes queries to appropriate handlers based on intent detection.
-    Returns (handled, result) where handled is True if we processed it ourselves.
-    """
-    query_lower = query.lower()
-    
-    # Extract numbers from query for limits
-    numbers = re.findall(r'\d+', query)
-    limit = int(numbers[0]) if numbers else 10
-    
-    # 1. Show/Display/List Queries
-    if any(word in query_lower for word in ['show', 'display', 'list', 'all', 'first', 'top', 'head']):
-        # Check for specific columns mentioned
-        relevant_cols = get_relevant_columns(query_lower, df)
-        if relevant_cols:
-            result_df = df[relevant_cols].head(limit)
-            return True, create_smart_table(result_df, f"Showing {limit} {' & '.join(relevant_cols)} records")
-        else:
-            result_df = df.head(limit)
-            return True, create_smart_table(result_df, f"Showing first {limit} records")
-    
-    # 2. Count/Total Queries
-    elif any(word in query_lower for word in ['count', 'total', 'how many', 'number of']):
-        total = len(df)
-        return True, create_count_card(total, "Total Records")
-    
-    # 3. Search/Filter Queries
-    elif any(word in query_lower for word in ['find', 'search', 'where', 'filter', 'contains']):
-        filtered_df = smart_filter(query, df)
-        if not filtered_df.empty:
-            return True, create_smart_table(filtered_df.head(limit), f"Search Results ({len(filtered_df)} found)")
-        else:
-            return True, create_text_response("No matching records found.")
-    
-    # 4. Column Information Queries
-    elif any(word in query_lower for word in ['columns', 'fields', 'what data', 'structure']):
-        col_info = create_column_info(df)
-        return True, col_info
-    
-    # If we can't handle it, return False to let PandasAI handle it
-    return False, None
+def parse_result_to_dataframe(result_string, original_df):
+    """Try to parse string result back to DataFrame"""
+    try:
+        import pandas as pd
+        import re
+        
+        # If the string contains column names from original DataFrame
+        lines = result_string.strip().split('\n')
+        data = []
+        
+        for line in lines:
+            if line.strip():
+                # Try to parse each line
+                parts = re.split(r'\s+', line.strip())
+                if len(parts) >= 2:
+                    try:
+                        # Assuming first part is index, second is numeric, rest is text
+                        index_val = parts[0]
+                        if index_val.isdigit():
+                            row_data = {}
+                            
+                            # Map to original DataFrame columns if possible
+                            if len(parts) >= 3:
+                                row_data[original_df.columns[0]] = parts[1] if len(original_df.columns) > 0 else parts[1]
+                                if len(original_df.columns) > 1:
+                                    row_data[original_df.columns[1]] = ' '.join(parts[2:])
+                            
+                            if row_data:
+                                data.append(row_data)
+                    except (ValueError, IndexError):
+                        continue
+        
+        if data:
+            return pd.DataFrame(data)
+        return None
+        
+    except Exception:
+        return None
 
-def get_relevant_columns(query, df):
-    """Find columns that are mentioned in the query."""
-    relevant_cols = []
-    for col in df.columns:
-        if col.lower() in query or any(word in col.lower() for word in query.split()):
-            relevant_cols.append(col)
-    return relevant_cols[:5]  # Limit to 5 columns max
-
-def smart_filter(query, df):
-    """Attempt to filter DataFrame based on query content."""
-    query_lower = query.lower()
-    
-    # Extract quoted strings or specific values
-    quoted_terms = re.findall(r'"([^"]*)"', query) + re.findall(r"'([^']*)'", query)
-    
-    if quoted_terms:
-        # Filter by any column containing the quoted term
-        mask = pd.Series([False] * len(df))
-        for term in quoted_terms:
-            for col in df.select_dtypes(include=['object']).columns:
-                mask |= df[col].astype(str).str.contains(term, case=False, na=False)
-        return df[mask]
-    
-    return pd.DataFrame()  # Return empty if no filtering possible
-
-def create_smart_table(df, title):
-    """Create a beautiful, responsive table."""
+def create_styled_table(df, title="Results"):
+    """Create a beautifully styled HTML table"""
     if df.empty:
-        return f"<div class='no-data'>No data to display for: {title}</div>"
+        return f"<div style='text-align: center; color: #666;'>No data to display</div>"
     
-    # Limit columns if too many
-    if len(df.columns) > 6:
-        display_df = df.iloc[:, :6]
-        title += f" (showing first 6 of {len(df.columns)} columns)"
-    else:
-        display_df = df
-    
-    table_html = display_df.to_html(index=False, classes='smart-table', escape=False)
+    # Create HTML table with custom styling
+    html_table = df.to_html(
+        index=False,
+        classes='result-table',
+        escape=False,
+        table_id='data-table'
+    )
     
     return f"""
-    <div class="table-container">
-        <h4 class="table-title">{title}</h4>
+    <div style="margin: 15px 0;">
+        <h4 style="color: #667eea; margin-bottom: 10px; font-weight: 600;">{title}</h4>
         <style>
-            .table-container {{
-                margin: 20px 0;
-                border-radius: 12px;
+            .result-table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin: 15px 0;
+                font-size: 14px;
+                border-radius: 8px;
                 overflow: hidden;
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             }}
-            .table-title {{
+            .result-table thead tr {{
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
-                margin: 0;
-                padding: 15px 20px;
-                font-size: 1.1em;
-                font-weight: 600;
-            }}
-            .smart-table {{
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 0.9em;
-                background: white;
-                margin: 0;
-            }}
-            .smart-table th {{
-                background: #f8f9fa;
-                color: #495057;
-                font-weight: 600;
-                padding: 12px 15px;
                 text-align: left;
-                border-bottom: 2px solid #dee2e6;
+                font-weight: 600;
             }}
-            .smart-table td {{
-                padding: 10px 15px;
-                border-bottom: 1px solid #dee2e6;
-                color: #212529;
+            .result-table th,
+            .result-table td {{
+                padding: 12px 15px;
+                border: none;
+                text-align: left;
             }}
-            .smart-table tbody tr:hover {{
-                background-color: #f1f3f4;
-                transition: background-color 0.2s ease;
+            .result-table tbody tr {{
+                border-bottom: 1px solid #f0f0f0;
+                transition: background-color 0.3s ease;
             }}
-            .smart-table tbody tr:nth-child(even) {{
+            .result-table tbody tr:nth-of-type(even) {{
                 background-color: #f8f9fa;
             }}
-            .no-data {{
-                text-align: center;
-                padding: 40px;
-                color: #6c757d;
-                font-style: italic;
+            .result-table tbody tr:hover {{
+                background-color: #e3f2fd;
+                transform: translateY(-1px);
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }}
         </style>
-        {table_html}
-        <div style="background: #f8f9fa; padding: 8px 15px; font-size: 0.85em; color: #6c757d; border-top: 1px solid #dee2e6;">
-            📊 Showing {len(display_df)} rows
-        </div>
+        {html_table}
+        <small style="color: #666; font-style: italic;">Showing {len(df)} row(s)</small>
     </div>
     """
 
-def create_count_card(count, label):
-    """Create a metric card for counts."""
+def create_metric_card(value, label, icon="📊"):
+    """Create a metric card for numerical results"""
     return f"""
-    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
-                color: white; padding: 30px; border-radius: 15px; 
-                text-align: center; margin: 20px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-        <div style="font-size: 3em; margin-bottom: 10px;">📊</div>
-        <div style="font-size: 2.5em; font-weight: bold; margin: 10px 0;">{count:,}</div>
-        <div style="font-size: 1.2em; opacity: 0.9;">{label}</div>
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                color: white; padding: 20px; border-radius: 12px; 
+                text-align: center; margin: 15px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        <div style="font-size: 2.5em; margin-bottom: 5px;">{icon}</div>
+        <div style="font-size: 2.2em; font-weight: bold; margin: 10px 0;">{value}</div>
+        <div style="font-size: 1.1em; opacity: 0.9;">{label}</div>
     </div>
     """
 
-def create_column_info(df):
-    """Create a summary of DataFrame structure."""
-    info_html = "<div class='column-info'><h4>📋 Dataset Structure</h4><ul>"
-    for col in df.columns:
-        dtype = str(df[col].dtype)
-        non_null = df[col].count()
-        info_html += f"<li><strong>{col}</strong> ({dtype}) - {non_null:,} non-null values</li>"
-    info_html += "</ul></div>"
-    
-    style = """
-    <style>
-        .column-info {
-            background: #f8f9fa; padding: 20px; border-radius: 10px; 
-            border-left: 4px solid #007bff; margin: 15px 0;
-        }
-        .column-info h4 { color: #007bff; margin-top: 0; }
-        .column-info ul { margin: 15px 0; }
-        .column-info li { margin: 8px 0; padding: 5px 0; }
-    </style>
-    """
-    return style + info_html
-
-def create_text_response(text):
-    """Format simple text responses."""
+def create_text_answer(text, query):
+    """Create a formatted text answer"""
     return f"""
-    <div style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%); 
-                color: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                color: white; padding: 20px; border-radius: 12px; margin: 15px 0;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        <div style="font-weight: 600; margin-bottom: 10px; font-size: 1.1em;">Response:</div>
         <div style="font-size: 1.1em;">{text}</div>
     </div>
     """
-
 
 
 def main():
@@ -759,43 +714,37 @@ def main():
                 
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
+                    # Add user message
                     st.session_state.messages.append({"role": "user", "content": query})
                     
+                    # Process query with PandasAI
                     try:
+                        import pandasai as pai
                         with st.spinner("🤖 Analyzing your data..."):
-                            # Get the underlying DataFrame
-                            pandas_df = st.session_state.df.dataframe if hasattr(st.session_state.df, 'dataframe') else st.session_state.df
-                            
-                            # Try to handle the query directly first
-                            handled, direct_result = smart_query_router(query, pandas_df)
-                            
-                            if handled:
-                                # We handled it directly with clean formatting
-                                st.session_state.messages.append({"role": "assistant", "content": direct_result})
-                            else:
-                                # Let PandasAI handle complex queries, but format the result
-                                import pandasai as pai
-                                result = st.session_state.df.chat(query)
-                                
-                                # For PandasAI results, create a simple formatted response
-                                if isinstance(result, pd.DataFrame):
-                                    formatted_result = create_smart_table(result, "Analysis Result")
-                                elif isinstance(result, (int, float)):
-                                    formatted_result = create_count_card(result, "Query Result")
+                            # Ensure we have a SmartDataframe
+                            if not hasattr(st.session_state.df, 'chat'):
+                                if hasattr(st.session_state.df, 'dataframe'):
+                                    pandas_df = st.session_state.df.dataframe
                                 else:
-                                    # For string results, just format nicely
-                                    formatted_result = create_text_response(str(result))
-                                
-                                st.session_state.messages.append({"role": "assistant", "content": formatted_result})
-                        
-                        st.rerun()
-                        
+                                    pandas_df = st.session_state.df
+                                st.session_state.df = pai.SmartDataframe(pandas_df)
+                            
+                            # Get response from PandasAI
+                            result = st.session_state.df.chat(query)
+                            
+                            # Instead of using the result directly, let's try to execute the query manually
+                            formatted_response = handle_pandasai_response(result, query, st.session_state.df)
+                            
+                            # Add agent response
+                            st.session_state.messages.append({"role": "assistant", "content": formatted_response})
+                            
+                            # Rerun to update chat display
+                            st.rerun()
+                    
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                         st.rerun()
-
-
 
             
             with tab2:
