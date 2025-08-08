@@ -141,14 +141,14 @@ if 'api_key' not in st.session_state:
     st.session_state.api_key = None
 
 def initialize_pandasai():
-    """Initialize PandasAI with the selected LLM"""
+    """Initialize PandasAI with the selected LLM and custom prompt template"""
     try:
         import pandasai as pai
+        
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
             llm = OpenAI(api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
-            # Use PandasAI's built-in LLM wrapper for external APIs
             from pandasai.llm import LLM
             
             class GroqLLM(LLM):
@@ -165,11 +165,15 @@ def initialize_pandasai():
                 
                 def call(self, instruction, value):
                     try:
+                        # Wrap the user query with our main prompt template
+                        main_prompt = create_main_prompt_template()
+                        enhanced_instruction = main_prompt.format(query=value)
+                        
                         response = self.client.chat.completions.create(
                             model="llama-3.3-70b-versatile",
                             messages=[
                                 {"role": "system", "content": instruction},
-                                {"role": "user", "content": value}
+                                {"role": "user", "content": enhanced_instruction}
                             ],
                             temperature=0.1
                         )
@@ -179,12 +183,24 @@ def initialize_pandasai():
             
             llm = GroqLLM(st.session_state.api_key)
         
-        pai.config.set({"llm": llm})
+        # Configure PandasAI with enhanced settings
+        pai.config.set({
+            "llm": llm,
+            "conversational": True,
+            "enable_cache": True,
+            "custom_prompts": {
+                "generate_python_code": create_main_prompt_template()
+            }
+        })
+        
         st.session_state.agent_initialized = True
         return True
     except Exception as e:
         st.error(f"Error initializing agent: {str(e)}")
         return False
+
+    
+
 def load_data_from_redash(api_url):
     """Load data from Redash API URL using PandasAI"""
     try:
@@ -385,6 +401,75 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     response = llm.invoke(prompt)
     return response.content
 
+def create_main_prompt_template():
+    """Create a main prompt template that guides PandasAI to format responses appropriately."""
+    return """
+You are an expert data analyst AI. When responding to user queries about data:
+
+1. **For tabular data requests** (show, list, display, etc.): 
+   - Format your response as a proper table with clear column headers
+   - Use pipe (|) separators and dashes (-) for table formatting
+2. **For numerical results**: Return just the number with context
+3. **For analysis**: Provide clear, structured explanations
+
+Always ensure your response is properly formatted and easy to read.
+
+User Query: {query}
+
+Please analyze the data and respond in the most appropriate format based on the query type.
+"""
+
+def detect_and_format_table(response_text):
+    """Detect if response contains tabular data and format it as HTML table"""
+    lines = response_text.strip().split('\n')
+    
+    # Check if response looks like tabular data
+    if len(lines) > 2:
+        # Look for patterns like "| Column | Column |" or space-separated values
+        if '|' in response_text:
+            # Already markdown table format
+            return response_text
+        else:
+            # Try to parse space-separated tabular data
+            try:
+                # Split the response into structured data
+                data_rows = []
+                headers = None
+                
+                for line in lines:
+                    if line.strip():
+                        # Split by multiple spaces or specific patterns
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            if headers is None:
+                                # Try to detect headers
+                                if any(char.isalpha() for char in line):
+                                    headers = parts
+                                else:
+                                    # Assume generic headers
+                                    headers = ['ID', 'Name', 'Location'][:len(parts)]
+                                    data_rows.append(parts)
+                            else:
+                                data_rows.append(parts)
+                
+                # Create markdown table
+                if headers and data_rows:
+                    table_md = "| " + " | ".join(headers) + " |\n"
+                    table_md += "|" + "|".join([" --- " for _ in headers]) + "|\n"
+                    
+                    for row in data_rows[:20]:  # Limit to 20 rows
+                        # Ensure row has same length as headers
+                        while len(row) < len(headers):
+                            row.append("")
+                        table_md += "| " + " | ".join(row[:len(headers)]) + " |\n"
+                    
+                    return table_md
+                    
+            except Exception:
+                pass
+    
+    return response_text
+
 def main():
     # Header
     st.markdown("""
@@ -559,31 +644,40 @@ def main():
                             import pandasai as pai
                             result = st.session_state.df.chat(query)
                             
-                            # If PandasAI returns a DataFrame, render with st.dataframe directly
-                            import pandas as pd
                             if isinstance(result, pd.DataFrame):
-                                # Instead of converting to string, show as table via Markdown
+                                # Convert DataFrame to markdown table
+                                formatted_result = result.head(20).to_markdown(index=False)
                                 st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": result.head(20).to_markdown(index=False)
+                                    "role": "assistant", 
+                                    "content": formatted_result
                                 })
-                            elif isinstance(result, str) and len(result) > 30:
-                                # If it's a string and may be tabular or verbose, use post-processing with LLM
-                                formatted = reformat_output_with_llm(
-                                    raw_response=result,
-                                    user_query=query,
-                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
-                                )
-                                st.session_state.messages.append({"role": "assistant", "content": formatted})
+                            elif isinstance(result, str):
+                                # Try to detect and format tables in string response
+                                formatted_result = detect_and_format_table(result)
+                                
+                                # If still no table format detected, use LLM post-processing as fallback
+                                if formatted_result == result and len(result) > 50:
+                                    formatted_result = reformat_output_with_llm(
+                                        raw_response=result,
+                                        user_query=query,
+                                        openai_api_key=st.session_state.api_key
+                                    )
+                                
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": formatted_result
+                                })
                             else:
-                                # Otherwise, fallback to just showing the response
-                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": str(result)
+                                })
+                            
                             st.rerun()
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                         st.rerun()
-
 
             
             with tab2:
@@ -599,3 +693,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
