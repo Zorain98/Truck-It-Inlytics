@@ -1,22 +1,18 @@
 import streamlit as st
-import os
-import shutil
-from io import StringIO
-import requests
 import pandas as pd
-from dotenv import load_dotenv
-from langchain_groq.chat_models import ChatGroq
-import pandasai as pai
-from pandasai_openai.openai import OpenAI as PandasAI_OpenAI
-import warnings
+import numpy as np
+import os
+from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
-import time
+from plotly.subplots import make_subplots
+import requests
+import json
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage, HumanMessage
 
-warnings.filterwarnings("ignore")
-
-# Page configuration
+# Page config
 st.set_page_config(
     page_title="Truck It Inlytics",
     page_icon="🚛",
@@ -24,403 +20,584 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better UI
+# Custom CSS for better aesthetics
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
+    .main {
+        padding-top: 2rem;
+    }
+    
+    .stChat {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border-radius: 10px;
-        margin-bottom: 2rem;
-        text-align: center;
-        color: white;
-    }
-    
-    .chat-container {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .human-message {
-        background-color: #e3f2fd;
-        border-radius: 15px;
-        padding: 10px 15px;
-        margin: 5px 0;
-        border-left: 4px solid #2196f3;
-    }
-    
-    .bot-message {
-        background-color: #f3e5f5;
-        border-radius: 15px;
-        padding: 10px 15px;
-        margin: 5px 0;
-        border-left: 4px solid #9c27b0;
+        padding: 20px;
+        margin: 10px 0;
     }
     
     .metric-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%);
+        padding: 20px;
+        border-radius: 15px;
+        color: white;
         text-align: center;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+    
+    .metric-label {
+        font-size: 1.1rem;
+        opacity: 0.9;
+    }
+    
+    .sidebar .sidebar-content {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     }
     
     .stButton > button {
-        background: linear-gradient(45deg, #667eea, #764ba2);
+        background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%);
         color: white;
         border: none;
         border-radius: 25px;
         padding: 0.5rem 2rem;
-        font-weight: bold;
-        transition: all 0.3s;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
     
     .stButton > button:hover {
+        color: white;
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.3);
     }
     
-    .sidebar-header {
-        background: linear-gradient(45deg, #667eea, #764ba2);
+    .upload-section {
+        background: linear-gradient(135deg, #000046 0%, #1CB5E0 100%);
         color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        margin-bottom: 1rem;
+        padding: 20px;
+        border-radius: 15px;
+        margin: 20px 0;
+    }
+    
+    .chat-message {
+        padding: 15px;
+        border-radius: 15px;
+        margin: 10px 0;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .human-message {
+        background: linear-gradient(135deg, #127555 0%, #099773 100%);
+        color: white;
+        margin-left: 20px;
+    }
+    
+    .agent-message {
+        background: linear-gradient(135deg, #000438 0%, #00458E 100%);
+        color: white;
+        margin-right: 20px;
+    }
+    
+    .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        font-weight: bold;
+    }
+    
+    .human-avatar {
+        background: white;
+        color: white;
+    }
+    
+    .agent-avatar {
+        background: white;
+        color: white;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
 if 'agent_initialized' not in st.session_state:
     st.session_state.agent_initialized = False
-if 'smart_df' not in st.session_state:
-    st.session_state.smart_df = None
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'llm' not in st.session_state:
-    st.session_state.llm = None
+if 'df' not in st.session_state:
+    st.session_state.df = None
+if 'llm_type' not in st.session_state:
+    st.session_state.llm_type = None
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = None
 
-def clean_cache():
-    """Clean up cache and exports"""
-    shutil.rmtree("cache", ignore_errors=True)
-    shutil.rmtree("exports", ignore_errors=True)
-
-def initialize_llm(provider, api_key, model_name):
-    """Initialize LLM based on provider"""
+def initialize_pandasai():
+    """Initialize PandasAI with the selected LLM"""
     try:
-        if provider == "OpenAI":
-            llm = PandasAI_OpenAI(
-                api_token=api_key,
-                model=model_name,
-                temperature=0.3,
-            )
-        else:  # Groq
-            # Note: You might need to create a Groq wrapper for pandasai
-            # For now, using OpenAI format - adjust as needed
-            llm = PandasAI_OpenAI(
-                api_token=api_key,
-                model=model_name,
-                temperature=0.3,
-            )
-        return llm
+        import pandasai as pai
+        if st.session_state.llm_type == "OpenAI":
+            from pandasai_openai.openai import OpenAI
+            llm = OpenAI(api_token=st.session_state.api_key)
+        elif st.session_state.llm_type == "Groq":
+            # Use PandasAI's built-in LLM wrapper for external APIs
+            from pandasai.llm import LLM
+            
+            class GroqLLM(LLM):
+                def __init__(self, api_key):
+                    self.api_key = api_key
+                    self._client = None
+                
+                @property
+                def client(self):
+                    if self._client is None:
+                        import groq
+                        self._client = groq.Groq(api_key=self.api_key)
+                    return self._client
+                
+                def call(self, instruction, value):
+                    try:
+                        response = self.client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": instruction},
+                                {"role": "user", "content": value}
+                            ],
+                            temperature=0.1
+                        )
+                        return response.choices[0].message.content
+                    except Exception as e:
+                        return f"Error: {str(e)}"
+            
+            llm = GroqLLM(st.session_state.api_key)
+        
+        pai.config.set({"llm": llm})
+        st.session_state.agent_initialized = True
+        return True
     except Exception as e:
-        st.error(f"Error initializing LLM: {str(e)}")
-        return None
+        st.error(f"Error initializing agent: {str(e)}")
+        return False
+    
 
-def load_data_from_url(url):
-    """Load data from Redash API URL"""
+def load_data_from_redash(api_url):
+    """Load data from Redash API URL using PandasAI"""
     try:
-        df = pai.read_csv(url)
+        import pandasai as pai
+        # Store the user given Redash API url in a variable
+        redash_api_url = api_url
+        
+        # Use PandasAI to read CSV directly from the URL
+        df = pai.read_csv(redash_api_url)
+        
         return df
     except Exception as e:
-        st.error(f"Error loading data from URL: {str(e)}")
+        st.error(f"Error loading data from Redash: {str(e)}")
         return None
 
-def load_data_from_file(uploaded_file):
-    """Load data from uploaded CSV file"""
-    try:
-        df = pd.read_csv(uploaded_file)
-        smart_df = pai.SmartDataframe(df, config={"llm": st.session_state.llm})
-        return smart_df
-    except Exception as e:
-        st.error(f"Error loading uploaded file: {str(e)}")
-        return None
 
 def display_data_summary(df):
-    """Display data summary and statistics"""
+    """Display comprehensive data summary and statistics using PandasAI"""
     if df is None:
-        st.warning("No data available for summary")
         return
     
-    # Convert to pandas DataFrame if it's a SmartDataframe
-    if hasattr(df, 'dataframe'):
-        data = df.dataframe
-    else:
-        data = df
+    st.markdown("## 📊 Data Summary & Statistics")
     
-    st.markdown("### 📊 Data Overview")
+    # Get the underlying pandas DataFrame for analysis
+    pandas_df = df.dataframe if hasattr(df, 'dataframe') else df
     
+    # Basic metrics in cards
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #667eea;">📝 Rows</h3>
-            <h2>{len(data):,}</h2>
+            <div class="metric-label">Total Records</div>
+            <div class="metric-value">{len(pandas_df):,}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #764ba2;">📋 Columns</h3>
-            <h2>{len(data.columns)}</h2>
+            <div class="metric-label">Total Columns</div>
+            <div class="metric-value">{len(pandas_df.columns)}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        numeric_cols = data.select_dtypes(include=['number']).columns
+        numeric_cols = pandas_df.select_dtypes(include=[np.number]).columns
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #667eea;">🔢 Numeric</h3>
-            <h2>{len(numeric_cols)}</h2>
+            <div class="metric-label">Numeric Columns</div>
+            <div class="metric-value">{len(numeric_cols)}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
-        text_cols = data.select_dtypes(include=['object']).columns
+        missing_percentage = (pandas_df.isnull().sum().sum() / (len(pandas_df) * len(pandas_df.columns))) * 100
         st.markdown(f"""
         <div class="metric-card">
-            <h3 style="color: #764ba2;">📝 Text</h3>
-            <h2>{len(text_cols)}</h2>
+            <div class="metric-label">Missing Data %</div>
+            <div class="metric-value">{missing_percentage:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
-    st.markdown("### 🔍 Data Preview")
-    st.dataframe(data.head(10), use_container_width=True)
+    # Data overview tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Data Preview", "📈 Statistics", "🔍 Data Types", "📊 Visualizations"])
     
-    # Data types
-    st.markdown("### 📋 Column Information")
-    col_info = pd.DataFrame({
-        'Column': data.columns,
-        'Data Type': data.dtypes,
-        'Non-Null Count': data.count(),
-        'Null Count': data.isnull().sum()
-    })
-    st.dataframe(col_info, use_container_width=True)
+    with tab1:
+        st.markdown("### Data Preview")
+        st.dataframe(pandas_df.head(20), use_container_width=True)
+        
+        st.markdown("### Data Shape")
+        st.info(f"Dataset contains **{len(pandas_df)} rows** and **{len(pandas_df.columns)} columns**")
     
-    # Basic statistics for numeric columns
-    if len(numeric_cols) > 0:
-        st.markdown("### 📈 Numeric Statistics")
-        st.dataframe(data[numeric_cols].describe(), use_container_width=True)
+    with tab2:
+        st.markdown("### Statistical Summary")
+        if len(numeric_cols) > 0:
+            st.dataframe(pandas_df[numeric_cols].describe(), use_container_width=True)
+        else:
+            st.info("No numeric columns found for statistical analysis")
+        
+        st.markdown("### Missing Values Analysis")
+        missing_data = pandas_df.isnull().sum()
+        missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
+        
+        if len(missing_data) > 0:
+            # Convert to Python native types to avoid JSON serialization issues
+            missing_values = [int(x) for x in missing_data.values]
+            missing_columns = [str(x) for x in missing_data.index]
+            
+            fig = px.bar(
+                x=missing_values,
+                y=missing_columns,
+                orientation='h',
+                title="Missing Values by Column",
+                color=missing_values,
+                color_continuous_scale="Reds"
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.success("🎉 No missing values found in the dataset!")
+    
+    with tab3:
+        st.markdown("### Data Types Analysis")
+        dtype_counts = pandas_df.dtypes.value_counts()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Convert dtype names to strings to avoid JSON serialization issues
+            dtype_names = [str(dtype) for dtype in dtype_counts.index]
+            dtype_values = [int(count) for count in dtype_counts.values]
+            
+            fig = px.pie(
+                values=dtype_values,
+                names=dtype_names,
+                title="Distribution of Data Types"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            import pandas as pd
+            dtype_df = pd.DataFrame({
+                'Column': pandas_df.columns,
+                'Data Type': pandas_df.dtypes.astype(str),
+                'Non-Null Count': pandas_df.count(),
+                'Null Count': pandas_df.isnull().sum()
+            })
+            st.dataframe(dtype_df, use_container_width=True)
+    
+    with tab4:
+        st.markdown("### Data Visualizations")
+        
+        if len(numeric_cols) > 0:
+            # Correlation heatmap
+            if len(numeric_cols) > 1:
+                st.markdown("#### Correlation Matrix")
+                corr_matrix = pandas_df[numeric_cols].corr()
+                # Convert column names to strings
+                corr_matrix.columns = [str(col) for col in corr_matrix.columns]
+                corr_matrix.index = [str(idx) for idx in corr_matrix.index]
+                
+                fig = px.imshow(
+                    corr_matrix,
+                    title="Correlation Heatmap",
+                    color_continuous_scale="RdBu",
+                    aspect="auto"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Distribution plots
+            if len(numeric_cols) > 0:
+                st.markdown("#### Distribution Analysis")
+                # Convert numeric columns to strings for selectbox
+                numeric_cols_str = [str(col) for col in numeric_cols]
+                selected_col = st.selectbox("Select column for distribution analysis:", numeric_cols_str)
+                
+                if selected_col:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        fig = px.histogram(
+                            pandas_df,
+                            x=selected_col,
+                            title=f"Distribution of {selected_col}",
+                            nbins=30
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        fig = px.box(
+                            pandas_df,
+                            y=selected_col,
+                            title=f"Box Plot of {selected_col}"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+def reformat_output_with_llm(raw_response, user_query, openai_api_key):
+    # Use the OpenAI model from LangChain to turn string output into a table or concise summary.
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=(
+                "You are a data assistant. "
+                "When given a raw text output (possibly with table data), "
+                "format it into a readable Markdown table or, if a table is not relevant, "
+                "give a concise, well-organized summary. "
+                "Be accurate and relevant to the input query."
+            )),
+            HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
+        ]
+    )
+    llm = ChatOpenAI(
+        model="gpt-3.5-turbo",
+        api_key=openai_api_key,
+        temperature=0.1,
+        # Optionally, set max_tokens=512 or similar
+    )
+    response = llm.invoke(prompt)
+    return response.content.value
 
 def main():
     # Header
     st.markdown("""
-    <div class="main-header">
-        <h1>🚛 Truck It Inlytics</h1>
-        <p>Advanced Data Analytics Chatbot for Logistics Intelligence</p>
+    <div style="text-align: center; padding: 2rem 0;">
+        <h1 style="color: #667eea; font-size: 3rem; margin-bottom: 0;">🚛 Truck It Inlytics</h1>
+        <p style="color: #000000; font-size: 1.2rem;">AI-Powered Data Analytics Chatbot</p>
     </div>
     """, unsafe_allow_html=True)
     
     # Sidebar configuration
     with st.sidebar:
-        st.markdown("""
-        <div class="sidebar-header">
-            <h2>⚙️ Configuration</h2>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("## ⚙️ Configuration")
         
-        # LLM Provider Selection
-        st.markdown("### 🤖 Select AI Provider")
-        llm_provider = st.selectbox(
-            "Choose your LLM provider:",
-            ["OpenAI", "Groq"],
-            help="Select the AI provider for data analysis"
+        # LLM Selection
+        llm_choice = st.selectbox(
+            "Select LLM Provider:",
+            ["Select...", "OpenAI", "Groq"],
+            key="llm_selector"
         )
         
-        # API Key Input
-        st.markdown("### 🔑 API Configuration")
-        api_key = st.text_input(
-            "Enter API Key:",
-            type="password",
-            help="Enter your API key for the selected provider"
-        )
-        
-        # Model Selection
-        if llm_provider == "OpenAI":
-            model_options = ["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"]
-        else:
-            model_options = ["mixtral-8x7b-32768", "llama2-70b-4096"]
-        
-        selected_model = st.selectbox(
-            "Select Model:",
-            model_options,
-            help="Choose the specific model to use"
-        )
-        
-        # Initialize Agent Button
-        if st.button("🚀 Initialize Agent", help="Initialize the AI agent with your settings"):
+        if llm_choice != "Select...":
+            st.session_state.llm_type = llm_choice
+            
+            # API Key input
+            api_key_label = f"{llm_choice} API Key:"
+            api_key = st.text_input(
+                api_key_label,
+                type="password",
+                placeholder=f"Enter your {llm_choice} API key..."
+            )
+            
             if api_key:
-                with st.spinner("Initializing agent..."):
-                    clean_cache()
-                    llm = initialize_llm(llm_provider, api_key, selected_model)
-                    if llm:
-                        st.session_state.llm = llm
-                        pai.set_config({"llm": llm})
-                        st.session_state.agent_initialized = True
-                        st.success("✅ Agent initialized successfully!")
-                    else:
-                        st.error("❌ Failed to initialize agent")
-            else:
-                st.error("❌ Please enter your API key")
+                st.session_state.api_key = api_key
+                
+                # Initialize Agent button
+                if st.button("🚀 Initialize Agent", key="init_agent"):
+                    with st.spinner("Initializing agent..."):
+                        if initialize_pandasai():
+                            st.success("✅ Agent initialized successfully!")
+                        else:
+                            st.error("❌ Failed to initialize agent")
         
         st.markdown("---")
         
-        # Data Source Selection
+        # Data source selection
         if st.session_state.agent_initialized:
-            st.markdown("### 📁 Data Source")
+            st.markdown("## 📁 Data Source")
+            
             data_source = st.radio(
                 "Choose data source:",
-                ["Upload CSV File", "Redash API URL"],
-                help="Select how you want to provide data"
+                ["Upload CSV", "Redash API URL"],
+                key="data_source"
             )
             
-            if data_source == "Upload CSV File":
+            if data_source == "Upload CSV":
                 uploaded_file = st.file_uploader(
-                    "Choose a CSV file",
+                    "Upload CSV file:",
                     type="csv",
-                    help="Upload your CSV file for analysis"
+                    help="Upload a CSV file to analyze"
                 )
                 
                 if uploaded_file is not None:
-                    with st.spinner("Loading data..."):
-                        smart_df = load_data_from_file(uploaded_file)
-                        if smart_df:
-                            st.session_state.smart_df = smart_df
-                            st.success("✅ Data loaded successfully!")
+                    try:
+                        import pandasai as pai
+                        df = pai.read_csv(uploaded_file)
+                        st.session_state.df = df
+                        st.success(f"✅ File uploaded! {len(df)} rows loaded.")
+                    except Exception as e:
+                        st.error(f"Error loading file: {str(e)}")
             
-            else:  # Redash API URL
+            elif data_source == "Redash API URL":
                 redash_url = st.text_input(
-                    "Enter Redash API URL:",
-                    help="Enter the complete Redash API URL with authentication"
+                    "Redash API URL:",
+                    placeholder="Enter Redash API URL..."
                 )
                 
-                if st.button("📥 Load Data from URL"):
-                    if redash_url:
-                        with st.spinner("Loading data from URL..."):
-                            smart_df = load_data_from_url(redash_url)
-                            if smart_df:
-                                st.session_state.smart_df = smart_df
-                                st.success("✅ Data loaded successfully!")
-                    else:
-                        st.error("❌ Please enter a valid URL")
+                if redash_url and st.button("📥 Load Data"):
+                    with st.spinner("Loading data from Redash..."):
+                        df = load_data_from_redash(redash_url)
+                        if df is not None:
+                            st.session_state.df = df
+                            st.success(f"✅ Data loaded! {len(df)} rows loaded.")
         
-        # Clear Chat History
-        if st.button("🗑️ Clear Chat History"):
-            st.session_state.chat_history = []
-            st.success("Chat history cleared!")
+        # Display current status
+        st.markdown("---")
+        st.markdown("## 📊 Status")
+        
+        agent_status = "✅ Ready" if st.session_state.agent_initialized else "❌ Not initialized"
+        data_status = "✅ Loaded" if st.session_state.df is not None else "❌ No data"
+        
+        st.markdown(f"**Agent:** {agent_status}")
+        st.markdown(f"**Data:** {data_status}")
+        
+        if st.session_state.df is not None:
+            st.markdown(f"**Rows:** {len(st.session_state.df):,}")
+            st.markdown(f"**Columns:** {len(st.session_state.df.columns)}")
 
     # Main content area
     if not st.session_state.agent_initialized:
-        st.info("👈 Please configure and initialize the agent in the sidebar to get started.")
+        st.markdown("""
+        <div class="upload-section">
+            <h3>🚀 Getting Started</h3>
+            <p>To begin using Truck It Inlytics, please:</p>
+            <ol>
+                <li>Select your preferred LLM provider from the sidebar</li>
+                <li>Enter your API key</li>
+                <li>Click "Initialize Agent"</li>
+                <li>Upload a CSV file or provide a Redash API URL</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Welcome information
-        col1, col2 = st.columns(2)
+        # Demo features
+        st.markdown("## ✨ Features")
+        
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("""
-            ### 🌟 Features
-            - **Multi-LLM Support**: Choose between OpenAI and Groq
-            - **Flexible Data Input**: Upload CSV or connect to Redash
-            - **Interactive Chat**: Natural language data queries
-            - **Data Visualization**: Comprehensive analytics dashboard
-            - **Real-time Processing**: Instant insights and responses
+            ### 🤖 AI Chat Interface
+            - Natural language queries
+            - Intelligent data analysis
+            - Real-time responses
             """)
         
         with col2:
             st.markdown("""
-            ### 🚀 Getting Started
-            1. Select your preferred AI provider
-            2. Enter your API key
-            3. Initialize the agent
-            4. Upload data or provide Redash URL
-            5. Start chatting with your data!
+            ### 📊 Data Visualization
+            - Interactive charts
+            - Statistical summaries
+            - Data insights
+            """)
+        
+        with col3:
+            st.markdown("""
+            ### 🔧 Multiple Data Sources
+            - CSV file upload
+            - Redash API integration
+            - Real-time data loading
             """)
     
-    elif st.session_state.smart_df is None:
-        st.info("📁 Please provide data source in the sidebar to start analysis.")
-    
     else:
-        # Create tabs for different functionalities
-        tab1, tab2 = st.tabs(["💬 Chat with Data", "📊 Data Summary"])
-        
-        with tab1:
-            st.markdown("### 💬 Ask Questions About Your Data")
+        # Create tabs for different interfaces
+        if st.session_state.df is not None:
+            tab1, tab2 = st.tabs(["💬 Chat Interface", "📊 Data Summary"])
             
-            # Display chat history
-            for i, (query, response) in enumerate(st.session_state.chat_history):
-                st.markdown(f"""
-                <div class="human-message">
-                    <strong>👤 You:</strong> {query}
-                </div>
-                """, unsafe_allow_html=True)
+            with tab1:
+                st.markdown("## 💬 Chat with Your Data")
                 
-                st.markdown(f"""
-                <div class="bot-message">
-                    <strong>🤖 Truck It Inlytics:</strong> {response}
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Chat input
-            with st.form("chat_form", clear_on_submit=True):
-                user_query = st.text_input(
-                    "Ask a question about your data:",
-                    placeholder="e.g., What are the top 5 pickup warehouses by total time spent?",
-                    help="Type your question in natural language"
-                )
+                # Display chat messages
+                for message in st.session_state.messages:
+                    if message["role"] == "user":
+                        st.markdown(f"""
+                        <div class="chat-message human-message">
+                            <div class="avatar human-avatar">👤</div>
+                            <div>{message["content"]}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="chat-message agent-message">
+                            <div class="avatar agent-avatar">👾</div>
+                            <div>{message["content"]}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
                 
-                col1, col2 = st.columns([1, 4])
-                with col1:
-                    submit_button = st.form_submit_button("🚀 Ask")
-                
-                if submit_button and user_query:
-                    with st.spinner("🤔 Analyzing your data..."):
-                        try:
-                            response = st.session_state.smart_df.chat(user_query)
+                # Chat input
+                if query := st.chat_input("Ask me anything about your data..."):
+                    st.session_state.messages.append({"role": "user", "content": query})
+                    try:
+                        with st.spinner("🤖 Analyzing your data..."):
+                            import pandasai as pai
+                            result = st.session_state.df.chat(query)
                             
-                            # Add to chat history
-                            st.session_state.chat_history.append((user_query, response))
-                            
-                            # Display the new response
-                            st.markdown(f"""
-                            <div class="human-message">
-                                <strong>👤 You:</strong> {user_query}
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            st.markdown(f"""
-                            <div class="bot-message">
-                                <strong>🤖 Truck It Inlytics:</strong> {response}
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                        except Exception as e:
-                            st.error(f"❌ Error processing query: {str(e)}")
-        
-        with tab2:
-            display_data_summary(st.session_state.smart_df)
+                            # If PandasAI returns a DataFrame, render with st.dataframe directly
+                            import pandas as pd
+                            if isinstance(result, pd.DataFrame):
+                                # Instead of converting to string, show as table via Markdown
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": result.head(20).to_markdown(index=False)
+                                })
+                            elif isinstance(result, str) and len(result) > 30:
+                                # If it's a string and may be tabular or verbose, use post-processing with LLM
+                                formatted = reformat_output_with_llm(
+                                    raw_response=result,
+                                    user_query=query,
+                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
+                                )
+                                st.session_state.messages.append({"role": "assistant", "content": formatted})
+                            else:
+                                # Otherwise, fallback to just showing the response
+                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                            st.rerun()
+                    except Exception as e:
+                        error_msg = f"Sorry, I encountered an error: {str(e)}"
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                        st.rerun()
 
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; color: #666; padding: 1rem;">
-        <p>🚛 Truck It Inlytics - Powered by AI for Logistics Intelligence</p>
-    </div>
-    """, unsafe_allow_html=True)
+
+            
+            with tab2:
+                display_data_summary(st.session_state.df)
+        
+        else:
+            st.markdown("""
+            <div class="upload-section">
+                <h3>📁 No Data Loaded</h3>
+                <p>Please upload a CSV file or provide a Redash API URL from the sidebar to start analyzing your data.</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
