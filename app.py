@@ -11,6 +11,7 @@ import json
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
+import re
 
 # Page config
 st.set_page_config(
@@ -364,161 +365,47 @@ def display_data_summary(df):
                             title=f"Box Plot of {selected_col}"
                         )
                         st.plotly_chart(fig, use_container_width=True)
-import re
-import pandas as pd
 
-def convert_string_to_table(text_response, query):
-    """
-    Convert any string response that looks like tabular data into a proper HTML table
-    """
-    lines = text_response.strip().split('\n')
-    
-    # Remove empty lines
-    lines = [line.strip() for line in lines if line.strip()]
-    
-    if not lines:
-        return create_simple_response(text_response)
-    
-    # Try to detect if this is tabular data
-    data_rows = []
-    
-    for line in lines:
-        # Look for patterns like "0 Value1 Value2 1 Value3 Value4"
-        # Split on whitespace but preserve the structure
-        parts = re.split(r'\s+', line.strip())
-        
-        # Filter out single numbers at the beginning (indices)
-        if len(parts) > 2:
-            # Remove leading index if it's just a number
-            if parts[0].isdigit():
-                parts = parts[1:]
-            data_rows.append(parts)
-    
-    if len(data_rows) < 2:
-        return create_simple_response(text_response)
-    
-    # Try to create a structured table
+def reformat_output_with_llm(raw_response, user_query, openai_api_key):
+    # Use the OpenAI model from LangChain to turn string output into a table or concise summary.
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=(
+                "You are a data assistant. "
+                "When given a raw text output (possibly with table data), "
+                "format it into a readable Markdown table or, if a table is not relevant, "
+                "give a concise, well-organized summary. "
+                "Be accurate and relevant to the input query."
+            )),
+            HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
+        ]
+    )
+    llm = ChatOpenAI(
+        model="gpt-3.5-turbo",
+        api_key=openai_api_key,
+        temperature=0.1,
+        # Optionally, set max_tokens=512 or similar
+    )
+    response = llm.invoke(prompt)
+    return response.content
+
+def try_parse_table_from_string(text):
+    """Try to convert a table-like string into a pandas DataFrame."""
     try:
-        # Determine number of columns based on the query and data
-        if 'rider' in query.lower() and 'city' in query.lower():
-            headers = ['Rider Name', 'Destination City']
-            max_cols = 2
-        elif 'rider' in query.lower():
-            headers = ['Rider Name']
-            max_cols = 1
-        else:
-            # Generic headers based on first row
-            max_cols = max(len(row) for row in data_rows[:5])
-            headers = [f'Column {i+1}' for i in range(max_cols)]
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
         
-        # Clean and structure the data
-        table_data = []
-        for row in data_rows:
-            clean_row = []
-            for i in range(max_cols):
-                if i < len(row):
-                    clean_row.append(row[i])
-                else:
-                    clean_row.append('')
-            table_data.append(clean_row)
+        # If lines are separated by multiple spaces, split by 2+ spaces
+        split_lines = [re.split(r"\s{2,}", line) for line in lines]
         
-        # Create DataFrame and convert to HTML
-        df = pd.DataFrame(table_data, columns=headers)
+        # First row = header
+        headers = split_lines[0]
+        rows = split_lines[1:]
         
-        # Remove rows with all empty values
-        df = df.dropna(how='all')
-        
-        if not df.empty:
-            return create_beautiful_table(df, f"Query Results ({len(df)} records)")
-    
-    except Exception as e:
-        pass
-    
-    return create_simple_response(text_response)
-
-def create_beautiful_table(df, title):
-    """Create a styled HTML table"""
-    table_html = df.head(50).to_html(index=False, escape=False, classes='result-table')
-    
-    return f"""
-    <div class="table-container">
-        <h4 class="table-header">{title}</h4>
-        <div class="table-wrapper">
-            {table_html}
-        </div>
-    </div>
-    
-    <style>
-        .table-container {{
-            margin: 20px 0;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            background: white;
-        }}
-        
-        .table-header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 15px 20px;
-            margin: 0;
-            font-weight: 600;
-            font-size: 1.1em;
-        }}
-        
-        .table-wrapper {{
-            overflow-x: auto;
-            max-height: 600px;
-            overflow-y: auto;
-        }}
-        
-        .result-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            font-size: 0.9em;
-            margin: 0;
-        }}
-        
-        .result-table th {{
-            background: #f8f9fa;
-            color: #495057;
-            font-weight: 600;
-            padding: 12px 15px;
-            text-align: left;
-            border-bottom: 2px solid #dee2e6;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }}
-        
-        .result-table td {{
-            padding: 10px 15px;
-            border-bottom: 1px solid #dee2e6;
-            color: #212529;
-            vertical-align: top;
-        }}
-        
-        .result-table tbody tr:hover {{
-            background-color: #e3f2fd;
-            transition: background-color 0.2s ease;
-        }}
-        
-        .result-table tbody tr:nth-child(even) {{
-            background-color: #f8f9fa;
-        }}
-    </style>
-    """
-
-def create_simple_response(text):
-    """Create a simple formatted text response"""
-    return f"""
-    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; 
-                border-left: 4px solid #667eea; margin: 15px 0; 
-                font-family: 'Segoe UI', sans-serif;">
-        <div style="color: #495057; line-height: 1.6;">{text}</div>
-    </div>
-    """
+        # Create DataFrame
+        df = pd.DataFrame(rows, columns=headers)
+        return df
+    except Exception:
+        return None
 
 def main():
     # Header
@@ -689,26 +576,41 @@ def main():
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
                     st.session_state.messages.append({"role": "user", "content": query})
-                    
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
                             result = st.session_state.df.chat(query)
-                            
-                            # Always try to convert the result to a nice format
+
                             if isinstance(result, pd.DataFrame):
-                                formatted_response = create_beautiful_table(result, "Query Results")
+                                # Already a DataFrame
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": result.head(20).to_markdown(index=False)
+                                })
+                            
+                            elif isinstance(result, str):
+                                # Try parsing table from string
+                                parsed_df = try_parse_table_from_string(result)
+                                if parsed_df is not None:
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": parsed_df.head(20).to_markdown(index=False)
+                                    })
+                                elif len(result) > 30:
+                                    # If long text, format with LLM
+                                    formatted = reformat_output_with_llm(
+                                        raw_response=result,
+                                        user_query=query,
+                                        openai_api_key=st.session_state.api_key
+                                    )
+                                    st.session_state.messages.append({"role": "assistant", "content": formatted})
+                                else:
+                                    st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                            
                             else:
-                                # Convert string result to table if possible
-                                formatted_response = convert_string_to_table(str(result), query)
+                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
                             
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "content": formatted_response
-                            })
-                            
-                        st.rerun()
-                        
+                            st.rerun()
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
