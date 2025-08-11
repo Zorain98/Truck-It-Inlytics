@@ -567,28 +567,23 @@ def main():
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
                             result = st.session_state.smart_df.chat(query)
-                            
-                            # If PandasAI returns a DataFrame, render with st.markdown
+
+                            # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
                             if isinstance(result, pd.DataFrame):
-                                # Convert DataFrame to markdown and store in messages
-                                markdown_table = result.head(20).to_markdown(index=False)
+                                # Instead of converting to string, show as table via Markdown
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": markdown_table,
-                                    "type": "table"  # Optional: flag to identify table content
+                                    "content": result.head(20).to_markdown(index=False)
                                 })
                             elif isinstance(result, str) and len(result) > 30:
                                 # If it's a string and may be tabular or verbose, use post-processing with LLM
                                 formatted = reformat_output_with_llm(
                                     raw_response=result,
                                     user_query=query,
-                                    openai_api_key=st.session_state.api_key
+                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
                                 )
-                                st.session_state.messages.append({
-                                    "role": "assistant", 
-                                    "content": formatted  # Remove print() here - it was causing issues
-                                })
+                                st.session_state.messages.append({"role": "assistant", "content": formatted})
                             else:
                                 # Otherwise, fallback to just showing the response
                                 st.session_state.messages.append({"role": "assistant", "content": str(result)})
