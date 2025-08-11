@@ -143,29 +143,38 @@ if 'llm_type' not in st.session_state:
     st.session_state.llm_type = None
 if 'api_key' not in st.session_state:
     st.session_state.api_key = None
-if 'template_replaced' not in st.session_state:
-    st.session_state.template_replaced = False
 
 def initialize_pandasai():
-    """Initialize PandasAI with custom template replacement"""
+    """Initialize PandasAI with direct LLM instruction enhancement"""
     try:
-        # Replace template FIRST, before any PandasAI operations
-        if not st.session_state.get('template_replaced'):
-            st.session_state.template_replaced = replace_pandasai_template()
-        
         import pandasai as pai
         
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
-            llm = OpenAI(
+            
+            # Create enhanced LLM wrapper
+            class TableFormatOpenAI(OpenAI):
+                def call(self, instruction, value):
+                    # Add powerful table formatting instructions
+                    enhanced_instruction = f"""
+{instruction}
+
+CRITICAL TABLE FORMATTING RULES:
+1. If user asks to show/list/display data: ALWAYS return {{"type": "dataframe", "value": pd.DataFrame(...)}}
+2. Create proper DataFrames with clean column names
+3. Never return string format for tabular data
+4. Example: {{"type": "dataframe", "value": pd.DataFrame({{"Rider Name": ["John Doe"], "City": ["Karachi"]}})}}
+
+USER QUERY: {value}
+                    """
+                    return super().call(enhanced_instruction, value)
+            
+            llm = TableFormatOpenAI(
                 api_token=st.session_state.api_key,
                 model_name="gpt-4o",
-                temperature=0.3,
+                temperature=0.3,  # Lower temperature for more consistent formatting
             )
-        elif st.session_state.llm_type == "Groq":
-            # Your existing Groq setup...
-            pass
-        
+            
         pai.config.set({"llm": llm})
         st.session_state.agent_initialized = True
         return True
@@ -173,6 +182,7 @@ def initialize_pandasai():
     except Exception as e:
         st.error(f"Error initializing agent: {str(e)}")
         return False
+
 
 def load_data_from_redash(api_url):
     """Load data from Redash API URL using PandasAI"""
