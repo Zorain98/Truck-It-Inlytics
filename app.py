@@ -560,7 +560,6 @@ def main():
                         """, unsafe_allow_html=True)
                 
                 # Chat input
-                
                 if query := st.chat_input("Ask me anything about your data..."):
                     st.session_state.messages.append({"role": "user", "content": query})
                     try:
@@ -586,23 +585,12 @@ def main():
                                 st.session_state.messages.append({"role": "assistant", "content": formatted})
                             else:
                                 # Otherwise, fallback to just showing the response
-                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                                st.session_state.messages.append({"role": "assistant", "content": result})
                             st.rerun()
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                         st.rerun()
-
-                # Then in your message display loop, render tables with st.markdown:
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        if message.get("type") == "table" or "|" in message["content"]:
-                            # Use st.markdown for table content
-                            st.markdown(message["content"])
-                        else:
-                            # Use st.write for regular content
-                            st.write(message["content"])
-
 
             
             with tab2:
