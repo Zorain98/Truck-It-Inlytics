@@ -617,9 +617,22 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             # Direct approach from your working solution
-                            response = st.session_state.df.chat(query)
-                            st.session_state.messages.append({"role": "assistant", "content": str(response)})
-                            st.rerun()
+                            result = st.session_state.df.chat(query)
+                            if isinstance(result, pd.DataFrame):
+                                # Proper DataFrame output: render as markdown or streamlit dataframe directly
+                                formatted_response = result.head(20).to_markdown(index=False)
+                            elif isinstance(result, str):
+                                # Result is a string; just display it as-is (or optionally post-process)
+                                formatted_response = result
+                            else:
+                                # For other types (numbers, etc.), convert to string safely
+                                formatted_response = str(result)
+
+                            # Then add to messages or display it
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "content": formatted_response
+                            })
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
