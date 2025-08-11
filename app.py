@@ -158,7 +158,7 @@ def override_pandasai_template():
         # Override if our custom template exists
         if custom_template.exists() and original_template.exists():
             # Backup original (just in case)
-            backup_path = original_template.with_suffix('.tmpl.backup')
+            backup_path = original_template.with_suffix('.tmpl')
             if not backup_path.exists():
                 shutil.copy2(original_template, backup_path)
             
@@ -639,3 +639,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
