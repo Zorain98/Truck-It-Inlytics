@@ -560,6 +560,7 @@ def main():
                         """, unsafe_allow_html=True)
                 
                 # Chat input
+                
                 if query := st.chat_input("Ask me anything about your data..."):
                     st.session_state.messages.append({"role": "user", "content": query})
                     try:
@@ -567,22 +568,27 @@ def main():
                             import pandasai as pai
                             result = st.session_state.smart_df.chat(query)
                             
-                            # If PandasAI returns a DataFrame, render with st.dataframe directly
+                            # If PandasAI returns a DataFrame, render with st.markdown
                             import pandas as pd
                             if isinstance(result, pd.DataFrame):
-                                # Instead of converting to string, show as table via Markdown
+                                # Convert DataFrame to markdown and store in messages
+                                markdown_table = result.head(20).to_markdown(index=False)
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": result.head(20).to_markdown(index=False)
+                                    "content": markdown_table,
+                                    "type": "table"  # Optional: flag to identify table content
                                 })
                             elif isinstance(result, str) and len(result) > 30:
                                 # If it's a string and may be tabular or verbose, use post-processing with LLM
                                 formatted = reformat_output_with_llm(
                                     raw_response=result,
                                     user_query=query,
-                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
+                                    openai_api_key=st.session_state.api_key
                                 )
-                                st.session_state.messages.append({"role": "assistant", "content": print(formatted)})
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": formatted  # Remove print() here - it was causing issues
+                                })
                             else:
                                 # Otherwise, fallback to just showing the response
                                 st.session_state.messages.append({"role": "assistant", "content": str(result)})
@@ -591,6 +597,16 @@ def main():
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                         st.rerun()
+
+                # Then in your message display loop, render tables with st.markdown:
+                for message in st.session_state.messages:
+                    with st.chat_message(message["role"]):
+                        if message.get("type") == "table" or "|" in message["content"]:
+                            # Use st.markdown for table content
+                            st.markdown(message["content"])
+                        else:
+                            # Use st.write for regular content
+                            st.write(message["content"])
 
 
             
