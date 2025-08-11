@@ -582,7 +582,7 @@ def main():
                                     user_query=query,
                                     openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
                                 )
-                                st.session_state.messages.append({"role": "assistant", "content": formatted})
+                                st.session_state.messages.append({"role": "assistant", "content": print(formatted)})
                             else:
                                 # Otherwise, fallback to just showing the response
                                 st.session_state.messages.append({"role": "assistant", "content": str(result)})
