@@ -149,7 +149,7 @@ def initialize_pandasai():
         import pandasai as pai
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
-            llm = OpenAI(api_token=st.session_state.api_key)
+            llm = OpenAI( model_name="gpt-4.5",temperature=0.3, api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
             # Use PandasAI's built-in LLM wrapper for external APIs
             from pandasai.llm import LLM
@@ -381,12 +381,7 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
             HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
         ]
     )
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
-        api_key=openai_api_key,
-        temperature=0.1,
-        # Optionally, set max_tokens=512 or similar
-    )
+    llm = ChatOpenAI(model_name="gpt-4.5",temperature=0.3, api_token=st.session_state.api_key)
     response = llm.invoke(prompt)
     return response.content.value
 
@@ -562,7 +557,7 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
-                            result = st.session_state.smart_df.chat(query)
+                            result = smart_df.chat(query)
                             
                             # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
@@ -604,3 +599,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
