@@ -10,6 +10,10 @@ groq==0.30.0
 plotly>=5.0.0
 python-dotenv>=1.1.1
 requests>=2.31.0
+SQLAlchemy==2.0.41
+sqlglot==25.34.1
+sqlglotrs==0.3.0
+
 
 
 
