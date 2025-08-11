@@ -149,7 +149,7 @@ def initialize_pandasai():
         import pandasai as pai
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
-            llm = OpenAI( model_name="gpt-4.5",temperature=0.3, api_token=st.session_state.api_key)
+            llm = OpenAI(model="gpt-4.5", temprature=0.3, api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
             # Use PandasAI's built-in LLM wrapper for external APIs
             from pandasai.llm import LLM
@@ -370,18 +370,26 @@ def display_data_summary(smart_df):
 def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     # Use the OpenAI model from LangChain to turn string output into a table or concise summary.
     prompt = ChatPromptTemplate.from_messages(
-        [
-            SystemMessage(content=(
-                "You are a data assistant. "
-                "When given a raw text output (possibly with table data), "
-                "format it into a readable Markdown table or, if a table is not relevant, "
-                "give a concise, well-organized summary. "
-                "Be accurate and relevant to the input query."
-            )),
-            HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
-        ]
+    [
+        SystemMessage(content=(
+            "You are a data assistant. "
+            "Analyze the provided text and detect if it has a clear, repeating pattern of paired values "
+            "(such as a label followed by a corresponding value). "
+            "If such a consistent pattern exists throughout the text, convert it into a clean, readable Markdown table "
+            "with appropriate headers based on the content. "
+            "Preserve all text exactly as given. "
+            "If the text does not match a consistent repeating pattern, do NOT create a table; "
+            "instead, return a concise, well-organized summary."
+        )),
+        HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
+    ]
+)
+    llm = ChatOpenAI(
+        model="gpt-4.5",
+        api_key=openai_api_key,
+        temperature=0.3,
+        # Optionally, set max_tokens=512 or similar
     )
-    llm = ChatOpenAI(model_name="gpt-4.5",temperature=0.3, api_token=st.session_state.api_key)
     response = llm.invoke(prompt)
     return response.content.value
 
@@ -557,7 +565,7 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
-                            result = smart_df.chat(query)
+                            result = st.session_state.smart_df.chat(query)
                             
                             # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
@@ -599,4 +607,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
