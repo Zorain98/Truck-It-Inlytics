@@ -368,73 +368,37 @@ def display_data_summary(smart_df):
                         st.plotly_chart(fig, use_container_width=True)
 
 def reformat_output_with_llm(raw_response, user_query, openai_api_key):
-    from langchain_openai import ChatOpenAI
-    from langchain.schema import SystemMessage, HumanMessage
-    from langchain.prompts import ChatPromptTemplate
-    
-    # Detect if user query suggests they want tabular data
-    table_indicators = [
-        'show', 'display', 'list', 'top', 'bottom', 'first', 'last',
-        'head', 'tail', 'rows', 'records', 'data', 'table', 'all',
-        'highest', 'lowest', 'best', 'worst', 'find', 'get'
-    ]
-    
-    # Check if query suggests tabular output
-    wants_table_format = any(indicator in user_query.lower() for indicator in table_indicators)
-    
-    if wants_table_format:
-        # Enhanced prompt for table detection and creation
-        system_content = (
-            "You are a data assistant. "
-            "The user asked a question that likely expects tabular data as a response. "
-            "Analyze the provided text and determine if it contains structured data that would be better presented as a table. "
-            "Look for: "
-            "1. Multiple items with similar attributes "
-            "2. Lists of records, entries, or data points "
-            "3. Repeated patterns of information "
-            "4. Statistical summaries or comparisons "
-            "5. Any data that has clear categories or columns "
-            "\n"
-            "If the data can be organized into a table: "
-            "- Convert it into a clean Markdown table with appropriate headers "
-            "- Preserve ALL original data and values exactly "
-            "- Use clear, descriptive column headers "
-            "- If the table would be too wide, prioritize the most important columns "
-            "\n"
-            "If the data is not suitable for a table, return a well-formatted summary. "
-            "Always prioritize clarity and readability."
-        )
-    else:
-        # Original logic for non-tabular queries
-        system_content = (
-            "You are a data assistant. "
-            "Analyze the provided text and detect if it has a clear, repeating pattern of paired values "
-            "(such as a label followed by a corresponding value). "
-            "If such a consistent pattern exists throughout the text, convert it into a clean, readable Markdown table "
-            "with appropriate headers based on the content. "
-            "Preserve all text exactly as given. "
-            "If the text does not match a consistent repeating pattern, do NOT create a table; "
-            "instead, return a concise, well-organized summary."
-        )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=system_content),
+      # Enhanced prompt for table detection and creation
+        prompt = ChatPromptTemplate.from_messages(
+    [
+        SystemMessage(content=(
+            "You are a text formatter. Your job is:\n"
+            "1. Detect if the provided raw text \"{raw_response}\" contains repeated sequences of values (e.g., word(s) + number).\n"
+            "2. If yes, output ONLY a Markdown table with one row per sequence, no explanations.\n"
+            "3. If no structured pattern is found, output the text exactly as given.\n\n"
+            "Rules:\n"
+            "- Do NOT add column headers unless they are clearly present in the text.\n"
+            "- Keep the structure general — do not assume specific column names.\n"
+            "- No extra commentary, no rewording, no text outside the table."
+        )),
         HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
-    ])
+    ]
+)
+
     
-    llm = ChatOpenAI(
-        model="gpt-4o",  # Fixed: gpt-4.5 doesn't exist, using gpt-4o instead
-        api_key=openai_api_key,
-        temperature=0.3,
-        max_tokens=1000  # Added max_tokens to prevent overly long responses
-    )
+        llm = ChatOpenAI(
+            model="gpt-4o",  # Fixed: gpt-4.5 doesn't exist, using gpt-4o instead
+            api_key=openai_api_key,
+            temperature=0.3,
+            max_tokens=1000  # Added max_tokens to prevent overly long responses
+        )
     
-    try:
-        response = llm.invoke(prompt)
-        return response.content
-    except Exception as e:
-        print(f"LLM reformatting failed: {e}")
-        return raw_response  # Fallback to original response
+        try:
+            response = llm.invoke(prompt)
+            return response.content
+        except Exception as e:
+            print(f"LLM reformatting failed: {e}")
+            return raw_response  # Fallback to original response
 
 def main():
     # Header
@@ -608,72 +572,28 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
+                            result = st.session_state.df.chat(query)
+                            
+                            # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
-                            
-                            result = st.session_state.smart_df.chat(query)
-                            
-                            # Debug: Print what PandasAI returns (optional - remove in production)
-                            print(f"PandasAI Result Type: {type(result)}")
-                            print(f"PandasAI Result Content: {str(result)[:200]}...")
-
                             if isinstance(result, pd.DataFrame):
-                                # Convert DataFrame to markdown table
-                                markdown_table = result.head(20).to_markdown(index=False)
+                                # Instead of converting to string, show as table via Markdown
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": markdown_table,
-                                    "type": "table"  # Flag to identify table content
+                                    "content": result.head(20).to_markdown(index=False)
                                 })
-                                
-                            elif isinstance(result, str):
-                                # Check if it's already a markdown table
-                                if '|' in result and result.count('\n') > 1:
-                                    st.session_state.messages.append({
-                                        "role": "assistant",
-                                        "content": result,
-                                        "type": "table"
-                                    })
-                                elif len(result) > 30:
-                                    # Use LLM reformatting for longer responses
-                                    formatted = reformat_output_with_llm(
-                                        raw_response=result,
-                                        user_query=query,
-                                        openai_api_key=st.session_state.api_key
-                                    )
-                                    
-                                    # Debug: Print formatted response (optional - remove in production)
-                                    print(f"Formatted Response: {formatted[:200]}...")
-                                    
-                                    # Check if formatted response is a table
-                                    if '|' in formatted and formatted.count('\n') > 1 and formatted.count('|') > 2:
-                                        st.session_state.messages.append({
-                                            "role": "assistant",
-                                            "content": formatted,
-                                            "type": "table"
-                                        })
-                                    else:
-                                        st.session_state.messages.append({
-                                            "role": "assistant",
-                                            "content": formatted,
-                                            "type": "text"
-                                        })
-                                else:
-                                    # Short string responses
-                                    st.session_state.messages.append({
-                                        "role": "assistant",
-                                        "content": result,
-                                        "type": "text"
-                                    })
+                            elif isinstance(result, str) and len(result) > 30:
+                                # If it's a string and may be tabular or verbose, use post-processing with LLM
+                                formatted = reformat_output_with_llm(
+                                    raw_response=result,
+                                    user_query=query,
+                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
+                                )
+                                st.session_state.messages.append({"role": "assistant", "content": formatted})
                             else:
-                                # Handle other data types
-                                st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": str(result),
-                                    "type": "text"
-                                })
-                            
+                                # Otherwise, fallback to just showing the response
+                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
                             st.rerun()
-                            
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
@@ -693,4 +613,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
