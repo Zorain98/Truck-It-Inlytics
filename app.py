@@ -15,6 +15,76 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 
+def patch_pandasai_prompts():
+    """Monkey patch PandasAI's prompt system to use custom templates"""
+    try:
+        import pandasai.core.prompts as prompts_module
+        
+        # Check if already patched to avoid double-patching
+        if hasattr(prompts_module, 'original_load_template'):
+            return True  # Already patched
+            
+        # Store original template loading function
+        original_load_template = getattr(prompts_module, 'load_template', None)
+        prompts_module.original_load_template = original_load_template
+        
+        # Custom enhanced template content
+        ENHANCED_OUTPUT_TEMPLATE = """
+{% if not output_type %}
+CRITICAL RESPONSE FORMAT RULES:
+- For data display queries (show, list, display, view, get, find): ALWAYS return type "dataframe"
+- For counts/totals/numbers: return type "number"  
+- For explanations/analysis: return type "string"
+- For charts/plots: return type "plot"
+
+EXAMPLES:
+- Query: "Show me riders" → { "type": "dataframe", "value": pd.DataFrame({"Rider Name": ["John", "Jane"], "City": ["Karachi", "Lahore"]}) }
+- Query: "How many riders?" → { "type": "number", "value": 150 }
+- Query: "Explain the data" → { "type": "string", "value": "This dataset contains..." }
+
+{% elif output_type == "dataframe" %}
+type (must be "dataframe"), value must be properly structured pd.DataFrame with:
+- Clean column names (no underscores, proper capitalization)
+- Organized data structure
+- No index numbers mixed in data
+
+CORRECT FORMAT: { "type": "dataframe", "value": pd.DataFrame({"Rider Name": ["Abdul Moiz", "Abdul Rehman"], "Destination City": ["Karachi", "Lahore"]}) }
+
+{% elif output_type == "string" %}
+type (must be "string"), value must be clear, well-formatted string.
+For tabular-looking data, format as clean text or markdown table.
+
+{% elif output_type == "number" %}
+type (must be "number"), value must be int or float.
+Example: { "type": "number", "value": 125 }
+
+{% elif output_type == "plot" %}
+type (must be "plot"), value must be string path to saved plot.
+Example: { "type": "plot", "value": "chart.png" }
+{% endif %}
+        """
+        
+        def custom_load_template(template_path):
+            """Custom template loader that intercepts specific templates"""
+            # Check if this is the output type template we want to override
+            if 'output_type_template' in str(template_path):
+                return ENHANCED_OUTPUT_TEMPLATE
+            elif original_load_template:
+                # Use original loader for other templates
+                return original_load_template(template_path)
+            else:
+                return ""
+        
+        # Apply the monkey patch
+        prompts_module.load_template = custom_load_template
+        
+        return True
+        
+    except Exception as e:
+        st.warning(f"⚠️ Prompt patching failed: {str(e)}, using default PandasAI behavior")
+        return False
+
+
 # Page config
 st.set_page_config(
     page_title="Truck It Inlytics",
@@ -142,51 +212,29 @@ if 'llm_type' not in st.session_state:
     st.session_state.llm_type = None
 if 'api_key' not in st.session_state:
     st.session_state.api_key = None
-
-def override_pandasai_template():
-    """Override PandasAI template with custom version"""
-    try:
-        # Get PandasAI installation path
-        pandasai_path = Path(pandasai.__file__).parent
-        
-        # Path to the original template
-        original_template = pandasai_path / "core" / "prompts" / "templates" / "shared" / "output_type_template.tmpl"
-        
-        # Path to our custom template
-        custom_template = Path("pandasai_override/core/prompts/templates/shared/output_type_template.tmpl")
-        
-        # Override if our custom template exists
-        if custom_template.exists() and original_template.exists():
-            # Backup original (just in case)
-            backup_path = original_template.with_suffix('.tmpl')
-            if not backup_path.exists():
-                shutil.copy2(original_template, backup_path)
-            
-            # Copy our custom template
-            shutil.copy2(custom_template, original_template)
-            st.success("✅ PandasAI template successfully overridden!")
-            return True
-        else:
-            st.warning("⚠️ Template files not found, using default PandasAI behavior")
-            return False
-            
-    except Exception as e:
-        st.error(f"❌ Failed to override template: {str(e)}")
-        return False
-
-# Call this before initializing PandasAI
-if st.session_state.get('template_overridden') is None:
-    st.session_state.template_overridden = override_pandasai_template()
+# Add this new line for patch tracking
+if 'prompts_patched' not in st.session_state:
+    st.session_state.prompts_patched = False
 
 def initialize_pandasai():
-    """Initialize PandasAI with the selected LLM"""
+    """Initialize PandasAI with template patching and enhanced configuration"""
     try:
+        # Apply template patch FIRST (before importing pandasai modules)
+        if not st.session_state.prompts_patched:
+            st.session_state.prompts_patched = patch_pandasai_prompts()
+            if st.session_state.prompts_patched:
+                st.info("✅ Custom prompts applied successfully!")
+        
         import pandasai as pai
+        
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
-            llm = OpenAI(api_token=st.session_state.api_key)
+            llm = OpenAI(
+                api_token=st.session_state.api_key,
+                model_name="gpt-3.5-turbo",  # Use your successful model
+                temperature=0.3,      # Use your successful temperature
+            )
         elif st.session_state.llm_type == "Groq":
-            # Use PandasAI's built-in LLM wrapper for external APIs
             from pandasai.llm import LLM
             
             class GroqLLM(LLM):
@@ -209,7 +257,7 @@ def initialize_pandasai():
                                 {"role": "system", "content": instruction},
                                 {"role": "user", "content": value}
                             ],
-                            temperature=0.1
+                            temperature=0.3  # Match your successful temperature
                         )
                         return response.choices[0].message.content
                     except Exception as e:
@@ -217,13 +265,14 @@ def initialize_pandasai():
             
             llm = GroqLLM(st.session_state.api_key)
         
+        # Clean configuration (from your successful approach)
         pai.config.set({"llm": llm})
         st.session_state.agent_initialized = True
         return True
+        
     except Exception as e:
         st.error(f"Error initializing agent: {str(e)}")
-        return False
-    
+        return False    
 
 def load_data_from_redash(api_url):
     """Load data from Redash API URL using PandasAI"""
@@ -586,7 +635,7 @@ def main():
                     else:
                         st.markdown(f"""
                         <div class="chat-message agent-message">
-                            <div class="avatar agent-avatar">👾</div>
+                            <div class="avatar agent-avatar">🤖</div>
                             <div>{message["content"]}</div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -594,30 +643,12 @@ def main():
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
                     st.session_state.messages.append({"role": "user", "content": query})
+                    
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
-                            import pandasai as pai
-                            result = st.session_state.df.chat(query)
-                            
-                            # If PandasAI returns a DataFrame, render with st.dataframe directly
-                            import pandas as pd
-                            if isinstance(result, pd.DataFrame):
-                                # Instead of converting to string, show as table via Markdown
-                                st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": result.head(20).to_markdown(index=False)
-                                })
-                            elif isinstance(result, str) and len(result) > 30:
-                                # If it's a string and may be tabular or verbose, use post-processing with LLM
-                                formatted = reformat_output_with_llm(
-                                    raw_response=result,
-                                    user_query=query,
-                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
-                                )
-                                st.session_state.messages.append({"role": "assistant", "content": formatted})
-                            else:
-                                # Otherwise, fallback to just showing the response
-                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                            # Direct approach from your working solution
+                            response = st.session_state.df.chat(query)
+                            st.session_state.messages.append({"role": "assistant", "content": str(response)})
                             st.rerun()
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
@@ -639,4 +670,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
