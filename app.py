@@ -136,8 +136,8 @@ if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'agent_initialized' not in st.session_state:
     st.session_state.agent_initialized = False
-if 'df' not in st.session_state:
-    st.session_state.df = None
+if 'smart_df' not in st.session_state:
+    st.session_state.smart_df = None
 if 'llm_type' not in st.session_state:
     st.session_state.llm_type = None
 if 'api_key' not in st.session_state:
@@ -198,23 +198,23 @@ def load_data_from_redash(api_url):
         redash_api_url = api_url
         
         # Use PandasAI to read CSV directly from the URL
-        df = pai.read_csv(redash_api_url)
+        smart_df = pai.read_csv(redash_api_url)
         
-        return df
+        return smart_df
     except Exception as e:
         st.error(f"Error loading data from Redash: {str(e)}")
         return None
 
 
-def display_data_summary(df):
+def display_data_summary(smart_df):
     """Display comprehensive data summary and statistics using PandasAI"""
-    if df is None:
+    if smart_df is None:
         return
     
     st.markdown("## 📊 Data Summary & Statistics")
     
     # Get the underlying pandas DataFrame for analysis
-    pandas_df = df.dataframe if hasattr(df, 'dataframe') else df
+    pandas_smart_df = smart_df.dataframe if hasattr(smart_df, 'dataframe') else smart_df
     
     # Basic metrics in cards
     col1, col2, col3, col4 = st.columns(4)
@@ -223,7 +223,7 @@ def display_data_summary(df):
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Total Records</div>
-            <div class="metric-value">{len(pandas_df):,}</div>
+            <div class="metric-value">{len(pandas_smart_df):,}</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -231,12 +231,12 @@ def display_data_summary(df):
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Total Columns</div>
-            <div class="metric-value">{len(pandas_df.columns)}</div>
+            <div class="metric-value">{len(pandas_smart_df.columns)}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        numeric_cols = pandas_df.select_dtypes(include=[np.number]).columns
+        numeric_cols = pandas_smart_df.select_dtypes(include=[np.number]).columns
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Numeric Columns</div>
@@ -245,7 +245,7 @@ def display_data_summary(df):
         """, unsafe_allow_html=True)
     
     with col4:
-        missing_percentage = (pandas_df.isnull().sum().sum() / (len(pandas_df) * len(pandas_df.columns))) * 100
+        missing_percentage = (pandas_smart_df.isnull().sum().sum() / (len(pandas_smart_df) * len(pandas_smart_df.columns))) * 100
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Missing Data %</div>
@@ -258,20 +258,20 @@ def display_data_summary(df):
     
     with tab1:
         st.markdown("### Data Preview")
-        st.dataframe(pandas_df.head(20), use_container_width=True)
+        st.dataframe(pandas_smart_df.head(20), use_container_width=True)
         
         st.markdown("### Data Shape")
-        st.info(f"Dataset contains **{len(pandas_df)} rows** and **{len(pandas_df.columns)} columns**")
+        st.info(f"Dataset contains **{len(pandas_smart_df)} rows** and **{len(pandas_smart_df.columns)} columns**")
     
     with tab2:
         st.markdown("### Statistical Summary")
         if len(numeric_cols) > 0:
-            st.dataframe(pandas_df[numeric_cols].describe(), use_container_width=True)
+            st.dataframe(pandas_smart_df[numeric_cols].describe(), use_container_width=True)
         else:
             st.info("No numeric columns found for statistical analysis")
         
         st.markdown("### Missing Values Analysis")
-        missing_data = pandas_df.isnull().sum()
+        missing_data = pandas_smart_df.isnull().sum()
         missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
         
         if len(missing_data) > 0:
@@ -294,7 +294,7 @@ def display_data_summary(df):
     
     with tab3:
         st.markdown("### Data Types Analysis")
-        dtype_counts = pandas_df.dtypes.value_counts()
+        dtype_counts = pandas_smart_df.dtypes.value_counts()
         
         col1, col2 = st.columns(2)
         
@@ -312,13 +312,13 @@ def display_data_summary(df):
         
         with col2:
             import pandas as pd
-            dtype_df = pd.DataFrame({
-                'Column': pandas_df.columns,
-                'Data Type': pandas_df.dtypes.astype(str),
-                'Non-Null Count': pandas_df.count(),
-                'Null Count': pandas_df.isnull().sum()
+            dtype_smart_df = pd.DataFrame({
+                'Column': pandas_smart_df.columns,
+                'Data Type': pandas_smart_df.dtypes.astype(str),
+                'Non-Null Count': pandas_smart_df.count(),
+                'Null Count': pandas_smart_df.isnull().sum()
             })
-            st.dataframe(dtype_df, use_container_width=True)
+            st.dataframe(dtype_smart_df, use_container_width=True)
     
     with tab4:
         st.markdown("### Data Visualizations")
@@ -327,7 +327,7 @@ def display_data_summary(df):
             # Correlation heatmap
             if len(numeric_cols) > 1:
                 st.markdown("#### Correlation Matrix")
-                corr_matrix = pandas_df[numeric_cols].corr()
+                corr_matrix = pandas_smart_df[numeric_cols].corr()
                 # Convert column names to strings
                 corr_matrix.columns = [str(col) for col in corr_matrix.columns]
                 corr_matrix.index = [str(idx) for idx in corr_matrix.index]
@@ -352,7 +352,7 @@ def display_data_summary(df):
                     
                     with col1:
                         fig = px.histogram(
-                            pandas_df,
+                            pandas_smart_df,
                             x=selected_col,
                             title=f"Distribution of {selected_col}",
                             nbins=30
@@ -361,7 +361,7 @@ def display_data_summary(df):
                     
                     with col2:
                         fig = px.box(
-                            pandas_df,
+                            pandas_smart_df,
                             y=selected_col,
                             title=f"Box Plot of {selected_col}"
                         )
@@ -454,9 +454,9 @@ def main():
                 if uploaded_file is not None:
                     try:
                         import pandasai as pai
-                        df = pai.read_csv(uploaded_file)
-                        st.session_state.df = df
-                        st.success(f"✅ File uploaded! {len(df)} rows loaded.")
+                        smart_df = pai.read_csv(uploaded_file)
+                        st.session_state.smart_df = smart_df
+                        st.success(f"✅ File uploaded! {len(smart_df)} rows loaded.")
                     except Exception as e:
                         st.error(f"Error loading file: {str(e)}")
             
@@ -468,24 +468,24 @@ def main():
                 
                 if redash_url and st.button("📥 Load Data"):
                     with st.spinner("Loading data from Redash..."):
-                        df = load_data_from_redash(redash_url)
-                        if df is not None:
-                            st.session_state.df = df
-                            st.success(f"✅ Data loaded! {len(df)} rows loaded.")
+                        smart_df = load_data_from_redash(redash_url)
+                        if smart_df is not None:
+                            st.session_state.smart_df = smart_df
+                            st.success(f"✅ Data loaded! {len(smart_df)} rows loaded.")
         
         # Display current status
         st.markdown("---")
         st.markdown("## 📊 Status")
         
         agent_status = "✅ Ready" if st.session_state.agent_initialized else "❌ Not initialized"
-        data_status = "✅ Loaded" if st.session_state.df is not None else "❌ No data"
+        data_status = "✅ Loaded" if st.session_state.smart_df is not None else "❌ No data"
         
         st.markdown(f"**Agent:** {agent_status}")
         st.markdown(f"**Data:** {data_status}")
         
-        if st.session_state.df is not None:
-            st.markdown(f"**Rows:** {len(st.session_state.df):,}")
-            st.markdown(f"**Columns:** {len(st.session_state.df.columns)}")
+        if st.session_state.smart_df is not None:
+            st.markdown(f"**Rows:** {len(st.session_state.smart_df):,}")
+            st.markdown(f"**Columns:** {len(st.session_state.smart_df.columns)}")
 
     # Main content area
     if not st.session_state.agent_initialized:
@@ -533,7 +533,7 @@ def main():
     
     else:
         # Create tabs for different interfaces
-        if st.session_state.df is not None:
+        if st.session_state.smart_df is not None:
             tab1, tab2 = st.tabs(["💬 Chat Interface", "📊 Data Summary"])
             
             with tab1:
@@ -562,7 +562,7 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
-                            result = st.session_state.df.chat(query)
+                            result = st.session_state.smart_df.chat(query)
                             
                             # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
@@ -592,7 +592,7 @@ def main():
 
             
             with tab2:
-                display_data_summary(st.session_state.df)
+                display_data_summary(st.session_state.smart_df)
         
         else:
             st.markdown("""
