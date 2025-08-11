@@ -373,15 +373,16 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     [
         SystemMessage(content=(
             "You are a data assistant. "
-            "Analyze the provided text and detect if it has a clear, repeating pattern of paired values "
-            "(such as a label followed by a corresponding value). "
-            "If such a consistent pattern exists throughout the text, convert it into a clean, readable Markdown table "
-            "with appropriate headers based on the content. "
-            "Preserve all text exactly as given. "
-            "If the text does not match a consistent repeating pattern, do NOT create a table; "
-            "instead, return a concise, well-organized summary."
+            "When given raw text output, first analyze its structure. "
+            "If it appears to contain structured, repetitive rows of data "
+            "(for example: each row contains values separated by spaces, tabs, commas, or pipes, "
+            "and the pattern is consistent across multiple rows), "
+            "then convert it into a clean Markdown table. "
+            "If it does not match such a pattern, instead give a concise, well-organized summary. "
+            "Do not invent data or add extra columns. "
+            "Only output the table (Markdown) or the summary—no explanations."
         )),
-        HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
+        HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Markdown table if the pattern matches, otherwise return a concise summary.")
     ]
 )
     llm = ChatOpenAI(
@@ -607,4 +608,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
