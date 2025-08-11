@@ -1,33 +1,35 @@
 {% if not output_type %}
 IMPORTANT: Choose output type intelligently based on query intent:
-
-- If query contains words like "show", "list", "display", "all", "first", "top" → use "dataframe"
+- If query contains words like "show", "list", "display", "all", "first", "top" → use "string" (formatted as markdown table)
 - If query asks for counts, totals, averages → use "number" 
 - If query asks for explanations, summaries → use "string"
 - If query asks for charts, graphs, plots → use "plot"
-
 Examples:
-- Query: "Show me all riders" → { "type": "dataframe", "value": pd.DataFrame({...}) }
+- Query: "Show me all riders" → { "type": "string", "value": "| Rider Name | City |\n|------------|------|\n| Abdul Moiz | Karachi |\n| Abdul Rehman | Lahore |" }
 - Query: "How many riders?" → { "type": "number", "value": 150 }
 - Query: "Explain the data" → { "type": "string", "value": "This dataset contains..." }
 - Query: "Create a chart" → { "type": "plot", "value": "chart.png" }
-
 {% elif output_type == "dataframe" %}
 type (must be "dataframe"), value must be pd.DataFrame with:
 - Clean column names (no underscores, proper capitalization)
 - Properly structured data
 - No index numbers in the data itself
-
 Example: { "type": "dataframe", "value": pd.DataFrame({"Rider Name": ["Abdul Moiz", "Abdul Rehman"], "Destination City": ["Karachi", "Lahore"]}) }
-
 {% elif output_type == "string" %}
-type (must be "string"). If the data is tabular, format as markdown table:
+type (must be "string"). 
 
-Example: { "type": "string", "value": "| Rider Name | City |\n|------------|------|\n| Abdul Moiz | Karachi |\n| Abdul Rehman | Lahore |" }
+IMPORTANT: If the query contains words like "show", "list", "display", "all", "first", "top", format the data as a markdown table:
+- Use pipe (|) delimiters to separate columns
+- Include header row with column names
+- Include separator row with dashes (|----------|----------|)
+- Align data properly in columns
+- Clean column names (no underscores, proper capitalization)
 
+Example for tabular data: { "type": "string", "value": "| Rider Name | Destination City | Trip Count |\n|------------|------------------|------------|\n| Abdul Moiz | Karachi | 25 |\n| Abdul Rehman | Lahore | 18 |\n| Ahmed Ali | Islamabad | 12 |" }
+
+For non-tabular explanations: { "type": "string", "value": "This dataset contains information about..." }
 {% elif output_type == "number" %}
 type (must be "number"), value must int. Example: { "type": "number", "value": 125 }
-
 {% elif output_type == "plot" %}
 type (must be "plot"), value must be string. Example: { "type": "plot", "value": "temp_chart.png" }
 {% endif %}
