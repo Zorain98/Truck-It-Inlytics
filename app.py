@@ -149,7 +149,7 @@ def initialize_pandasai():
         import pandasai as pai
         if st.session_state.llm_type == "OpenAI":
             from pandasai_openai.openai import OpenAI
-            llm = OpenAI(api_token=st.session_state.api_key)
+            llm = OpenAI(model="gpt-4.5", temprature=0.3, api_token=st.session_state.api_key)
         elif st.session_state.llm_type == "Groq":
             # Use PandasAI's built-in LLM wrapper for external APIs
             from pandasai.llm import LLM
@@ -372,16 +372,16 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     prompt = ChatPromptTemplate.from_messages(
     [
         SystemMessage(content=(
-            "You are a text formatter. Your job is:\n"
-            "1. Detect if the provided raw text contains repeated sequences of values (e.g., word(s) + number).\n"
-            "2. If yes, output ONLY a Markdown table with one row per sequence, no explanations.\n"
-            "3. If no structured pattern is found, output the text exactly as given.\n\n"
-            "Rules:\n"
-            "- Do NOT add column headers unless they are clearly present in the text.\n"
-            "- Keep the structure general — do not assume specific column names.\n"
-            "- No extra commentary, no rewording, no text outside the table."
+            "You are a data assistant. "
+            "Analyze the provided text \"{raw_response}\" and detect if it has a clear, repeating pattern of paired values "
+            "(such as a label followed by a corresponding value). "
+            "If such a consistent pattern exists throughout the text, convert it into a clean, readable Markdown table "
+            "with appropriate headers based on the content. "
+            "Preserve all text exactly as given. "
+            "If the text does not match a consistent repeating pattern, do NOT create a table; "
+            "instead, return a concise, well-organized summary."
         )),
-        HumanMessage(content=f"{raw_response}")
+        HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Table (Markdown) or concise answer. If table is too wide, include only meaningful columns.")
     ]
 )
     llm = ChatOpenAI(
@@ -391,7 +391,7 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
         # Optionally, set max_tokens=512 or similar
     )
     response = llm.invoke(prompt)
-    return response.content.value
+    return response.content
 
 def main():
     # Header
@@ -607,6 +607,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
