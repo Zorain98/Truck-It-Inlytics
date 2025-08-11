@@ -372,17 +372,16 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
     prompt = ChatPromptTemplate.from_messages(
     [
         SystemMessage(content=(
-            "You are a data assistant. "
-            "When given raw text output, first analyze its structure. "
-            "If it appears to contain structured, repetitive rows of data "
-            "(for example: each row contains values separated by spaces, tabs, commas, or pipes, "
-            "and the pattern is consistent across multiple rows), "
-            "then convert it into a clean Markdown table. "
-            "If it does not match such a pattern, instead give a concise, well-organized summary. "
-            "Do not invent data or add extra columns. "
-            "Only output the table (Markdown) or the summary—no explanations."
+            "You are a text formatter. Your job is:\n"
+            "1. Detect if the provided raw text contains repeated sequences of values (e.g., word(s) + number).\n"
+            "2. If yes, output ONLY a Markdown table with one row per sequence, no explanations.\n"
+            "3. If no structured pattern is found, output the text exactly as given.\n\n"
+            "Rules:\n"
+            "- Do NOT add column headers unless they are clearly present in the text.\n"
+            "- Keep the structure general — do not assume specific column names.\n"
+            "- No extra commentary, no rewording, no text outside the table."
         )),
-        HumanMessage(content=f"User Query: {user_query}\nRaw Output: {raw_response}\n\n---\nReturn ONLY a Markdown table if the pattern matches, otherwise return a concise summary.")
+        HumanMessage(content=f"{raw_response}")
     ]
 )
     llm = ChatOpenAI(
@@ -608,5 +607,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
