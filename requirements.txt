@@ -125,7 +125,6 @@ orjson==3.11.0
 overrides==7.3.1
 packaging==25.0
 pandas==2.3.1
-pandasai==3.0.0b19
 pandasai-openai==0.1.6
 pandocfilters==1.5.0
 parso==0.8.3
@@ -220,4 +219,5 @@ widgetsnbextension==4.0.8
 wrapt==1.17.2
 zipp==3.20.1
 zstandard==0.23.0
+
 
