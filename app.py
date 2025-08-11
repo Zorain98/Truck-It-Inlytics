@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import shutil
+from pathlib import Path
+import pandasai
 import os
 from datetime import datetime
 import plotly.express as px
@@ -139,6 +142,41 @@ if 'llm_type' not in st.session_state:
     st.session_state.llm_type = None
 if 'api_key' not in st.session_state:
     st.session_state.api_key = None
+
+def override_pandasai_template():
+    """Override PandasAI template with custom version"""
+    try:
+        # Get PandasAI installation path
+        pandasai_path = Path(pandasai.__file__).parent
+        
+        # Path to the original template
+        original_template = pandasai_path / "core" / "prompts" / "templates" / "shared" / "output_type_template.tmpl"
+        
+        # Path to our custom template
+        custom_template = Path("pandasai_override/core/prompts/templates/shared/output_type_template.tmpl")
+        
+        # Override if our custom template exists
+        if custom_template.exists() and original_template.exists():
+            # Backup original (just in case)
+            backup_path = original_template.with_suffix('.tmpl.backup')
+            if not backup_path.exists():
+                shutil.copy2(original_template, backup_path)
+            
+            # Copy our custom template
+            shutil.copy2(custom_template, original_template)
+            st.success("✅ PandasAI template successfully overridden!")
+            return True
+        else:
+            st.warning("⚠️ Template files not found, using default PandasAI behavior")
+            return False
+            
+    except Exception as e:
+        st.error(f"❌ Failed to override template: {str(e)}")
+        return False
+
+# Call this before initializing PandasAI
+if st.session_state.get('template_overridden') is None:
+    st.session_state.template_overridden = override_pandasai_template()
 
 def initialize_pandasai():
     """Initialize PandasAI with the selected LLM"""
