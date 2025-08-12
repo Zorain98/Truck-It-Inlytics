@@ -551,20 +551,65 @@ def main():
                 
                 # Display chat messages
                 for message in st.session_state.messages:
-                    if message["role"] == "user":
-                        st.markdown(f"""
-                        <div class="chat-message human-message">
-                            <div class="avatar human-avatar">👤</div>
-                            <div>{message["content"]}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <div class="chat-message agent-message">
-                            <div class="avatar agent-avatar">👾</div>
-                            <div>{message["content"]}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    with st.chat_message(message["role"]):
+                        content = message["content"]
+                        message_type = message.get("type", "text")
+                        
+                        # Check if it's a table
+                        is_table = (
+                            message_type == "table" or 
+                            (isinstance(content, str) and '|' in content and 
+                            content.count('\n') > 1 and content.count('|') > 2)
+                        )
+                        
+                        if is_table:
+                            # Use st.markdown() for table content with custom styling
+                            st.markdown("""
+                            <style>
+                            .stMarkdown table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin: 1rem 0;
+                                font-size: 14px;
+                            }
+                            .stMarkdown th {
+                                background-color: #f0f2f6;
+                                color: #262730;
+                                font-weight: 600;
+                                padding: 0.5rem 1rem;
+                                text-align: left;
+                                border-bottom: 2px solid #e6e9ef;
+                            }
+                            .stMarkdown td {
+                                padding: 0.5rem 1rem;
+                                border-bottom: 1px solid #e6e9ef;
+                                color: #262730;
+                            }
+                            .stMarkdown tr:nth-child(even) {
+                                background-color: #f9f9fb;
+                            }
+                            .stMarkdown tr:hover {
+                                background-color: #f0f2f6;
+                            }
+                            </style>
+                            """, unsafe_allow_html=True)
+                            
+                            # Display the table
+                            st.markdown(content)
+                            
+                            # Optional: Add table info
+                            if content.count('\n') > 1:
+                                row_count = content.count('\n') - 1  # Subtract header row
+                                st.caption(f"📊 Showing {row_count} rows")
+                                
+                        else:
+                            # Use st.write() for regular text content
+                            st.write(content)
+                            
+                        # Optional: Add copy button for tables
+                        if is_table and st.button(f"📋 Copy Table", key=f"copy_{hash(content)}", help="Copy table to clipboard"):
+                            st.code(content, language="markdown")
+                            st.success("Table copied as Markdown! You can paste it anywhere.")
                 
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
@@ -572,28 +617,72 @@ def main():
                     try:
                         with st.spinner("🤖 Analyzing your data..."):
                             import pandasai as pai
-                            result = st.session_state.df.chat(query)
-                            
-                            # If PandasAI returns a DataFrame, render with st.dataframe directly
                             import pandas as pd
+                            
+                            result = st.session_state.smart_df.chat(query)
+                            
+                            # Debug: Print what PandasAI returns (optional - remove in production)
+                            print(f"PandasAI Result Type: {type(result)}")
+                            print(f"PandasAI Result Content: {str(result)[:200]}...")
+
                             if isinstance(result, pd.DataFrame):
-                                # Instead of converting to string, show as table via Markdown
+                                # Convert DataFrame to markdown table
+                                markdown_table = result.head(20).to_markdown(index=False)
                                 st.session_state.messages.append({
                                     "role": "assistant",
-                                    "content": result.head(20).to_markdown(index=False)
+                                    "content": markdown_table,
+                                    "type": "table"  # Flag to identify table content
                                 })
-                            elif isinstance(result, str) and len(result) > 30:
-                                # If it's a string and may be tabular or verbose, use post-processing with LLM
-                                formatted = reformat_output_with_llm(
-                                    raw_response=result,
-                                    user_query=query,
-                                    openai_api_key=st.session_state.api_key  # Reuse OpenAI API Key
-                                )
-                                st.session_state.messages.append({"role": "assistant", "content": formatted})
+                                
+                            elif isinstance(result, str):
+                                # Check if it's already a markdown table
+                                if '|' in result and result.count('\n') > 1:
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": result,
+                                        "type": "table"
+                                    })
+                                elif len(result) > 30:
+                                    # Use LLM reformatting for longer responses
+                                    formatted = reformat_output_with_llm(
+                                        raw_response=result,
+                                        user_query=query,
+                                        openai_api_key=st.session_state.api_key
+                                    )
+                                    
+                                    # Debug: Print formatted response (optional - remove in production)
+                                    print(f"Formatted Response: {formatted[:200]}...")
+                                    
+                                    # Check if formatted response is a table
+                                    if '|' in formatted and formatted.count('\n') > 1 and formatted.count('|') > 2:
+                                        st.session_state.messages.append({
+                                            "role": "assistant",
+                                            "content": formatted,
+                                            "type": "table"
+                                        })
+                                    else:
+                                        st.session_state.messages.append({
+                                            "role": "assistant",
+                                            "content": formatted,
+                                            "type": "text"
+                                        })
+                                else:
+                                    # Short string responses
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": result,
+                                        "type": "text"
+                                    })
                             else:
-                                # Otherwise, fallback to just showing the response
-                                st.session_state.messages.append({"role": "assistant", "content": str(result)})
+                                # Handle other data types
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": str(result),
+                                    "type": "text"
+                                })
+                            
                             st.rerun()
+                            
                     except Exception as e:
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
