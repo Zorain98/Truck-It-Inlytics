@@ -404,165 +404,191 @@ def detect_and_convert_to_table(content):
     """
     Detect patterns in text that should be converted to markdown tables
     
-    Pattern: First line contains column names, subsequent lines contain data
-    Example: "Column1 Column2 Column3\nValue1 Value2 Value3\nValue4 Value5 Value6"
+    Handles both multi-line and single-line data formats:
+    - Multi-line: "Header1 Header2\nValue1 Value2\nValue3 Value4"
+    - Single-line: "Header1 Header2 Header3 Value1 Value2 Value3 Value4 Value5 Value6"
     """
     
     if not isinstance(content, str):
         return content, False
     
-    lines = [line.strip() for line in content.strip().split('\n') if line.strip()]
+    content = content.strip()
     
-    if len(lines) < 3:  # Need at least header + 2 data rows to consider it a table
-        return content, False
+    # First, try multi-line format (original logic)
+    lines = [line.strip() for line in content.split('\n') if line.strip()]
     
-    # Check if first line could be headers (multiple words, no obvious data pattern)
-    first_line_words = lines[0].split()
-    
-    if len(first_line_words) < 2:  # Need at least 2 columns
-        return content, False
-    
-    # Try to detect if subsequent lines follow a consistent pattern
-    # Check if lines have the same number of "tokens" as the header
-    num_columns = len(first_line_words)
-    data_rows = []
-    
-    for i in range(1, len(lines)):
-        # Split the line into tokens
-        tokens = lines[i].split()
+    if len(lines) >= 3:  # Multi-line format
+        first_line_words = lines[0].split()
         
-        # For cases where city names might have spaces, try different parsing strategies
-        if len(tokens) >= num_columns:
-            # Strategy 1: Last N tokens are values, rest is first column (for city names with spaces)
-            if num_columns == 2:  # Most common case: "City Name" + "Count"
-                # Take all but last token as city name, last token as count
-                city_parts = tokens[:-1]
-                count = tokens[-1]
+        if len(first_line_words) >= 2:
+            num_columns = len(first_line_words)
+            data_rows = []
+            
+            # Try to parse subsequent lines
+            for i in range(1, len(lines)):
+                tokens = lines[i].split()
+                if len(tokens) >= num_columns:
+                    if num_columns == 2:
+                        try:
+                            float(tokens[-1])
+                            city_parts = tokens[:-1]
+                            count = tokens[-1]
+                            row_data = [' '.join(city_parts), count]
+                            data_rows.append(row_data)
+                            continue
+                        except ValueError:
+                            pass
+                    
+                    if len(tokens) == num_columns:
+                        data_rows.append(tokens)
+                        continue
+                    
+                    if len(tokens) > num_columns:
+                        num_data_cols = num_columns - 1
+                        first_col = ' '.join(tokens[:-num_data_cols])
+                        data_cols = tokens[-num_data_cols:]
+                        row_data = [first_col] + data_cols
+                        data_rows.append(row_data)
+                        continue
                 
-                # Check if count looks like a number
+                return content, False
+            
+            if len(data_rows) >= 2:
+                return create_markdown_table(first_line_words, data_rows), True
+    
+    # If multi-line didn't work, try single-line format
+    tokens = content.split()
+    
+    if len(tokens) < 6:  # Need at least headers + 2 data rows worth of data
+        return content, False
+    
+    # Try different column counts (2, 3, 4, 5, etc.)
+    for num_cols in range(2, 8):  # Try 2 to 7 columns
+        if len(tokens) < num_cols + (num_cols * 2):  # Need headers + at least 2 data rows
+            continue
+            
+        headers = tokens[:num_cols]
+        remaining_tokens = tokens[num_cols:]
+        
+        # Check if remaining tokens can be evenly divided into rows
+        if len(remaining_tokens) % num_cols != 0:
+            continue
+        
+        num_data_rows = len(remaining_tokens) // num_cols
+        
+        if num_data_rows < 2:  # Need at least 2 data rows
+            continue
+        
+        # Try to parse the data
+        data_rows = []
+        success = True
+        
+        for row_idx in range(num_data_rows):
+            start_idx = row_idx * num_cols
+            end_idx = start_idx + num_cols
+            row_tokens = remaining_tokens[start_idx:end_idx]
+            
+            # Special handling for common patterns
+            if num_cols == 3:
+                # Pattern like: "City YearMonth Count"
+                # Check if last token is numeric and middle could be date-like
                 try:
-                    float(count)  # Test if it's numeric
-                    row_data = [' '.join(city_parts), count]
-                    data_rows.append(row_data)
+                    float(row_tokens[-1])  # Last should be numeric
+                    # Middle token should look like date (contains hyphen or numbers)
+                    if '-' in row_tokens[1] or row_tokens[1].isdigit():
+                        data_rows.append(row_tokens)
+                        continue
+                except ValueError:
+                    pass
+            
+            elif num_cols == 2:
+                # Pattern like: "City Count"
+                try:
+                    float(row_tokens[-1])  # Last should be numeric
+                    data_rows.append(row_tokens)
                     continue
                 except ValueError:
                     pass
             
-            # Strategy 2: Exact number of columns
-            if len(tokens) == num_columns:
-                data_rows.append(tokens)
-                continue
-            
-            # Strategy 3: More tokens than columns - try to group appropriately
-            if len(tokens) > num_columns:
-                # Assume last (num_columns-1) tokens are data, rest form first column
-                num_data_cols = num_columns - 1
-                first_col = ' '.join(tokens[:-num_data_cols])
-                data_cols = tokens[-num_data_cols:]
-                row_data = [first_col] + data_cols
-                data_rows.append(row_data)
-                continue
+            # General case: just add the tokens as they are
+            data_rows.append(row_tokens)
         
-        # If we can't parse this line consistently, it's probably not a table
-        return content, False
+        # If we successfully parsed all rows, create the table
+        if len(data_rows) == num_data_rows and len(data_rows) >= 2:
+            return create_markdown_table(headers, data_rows), True
     
-    # If we successfully parsed at least 2 data rows, create a table
-    if len(data_rows) >= 2:
-        # Create markdown table
-        headers = first_line_words
+    # Special handling for your specific case: "Destination City YearMonth Total_Deliveries"
+    # This is 3 columns but first column has space in it
+    if len(tokens) >= 8:  # At least 4 headers + 4 data values
+        # Try pattern: "Word1 Word2 Word3 Word4" as headers, then groups of 4
+        potential_headers = tokens[:4]
+        remaining = tokens[4:]
         
-        # Create header row
-        header_row = '| ' + ' | '.join(headers) + ' |'
-        separator_row = '|' + '|'.join(['---' for _ in headers]) + '|'
-        
-        # Create data rows
-        table_rows = []
-        for row_data in data_rows:
-            # Ensure we have the right number of columns
-            while len(row_data) < len(headers):
-                row_data.append('')
-            row_data = row_data[:len(headers)]  # Trim if too many
+        # Check if we can group remaining tokens into sets of 4
+        if len(remaining) % 4 == 0 and len(remaining) >= 8:
+            num_rows = len(remaining) // 4
+            data_rows = []
             
-            table_row = '| ' + ' | '.join(str(cell) for cell in row_data) + ' |'
-            table_rows.append(table_row)
-        
-        # Combine all parts
-        markdown_table = '\n'.join([header_row, separator_row] + table_rows)
-        return markdown_table, True
+            for i in range(num_rows):
+                start_idx = i * 4
+                row_data = remaining[start_idx:start_idx + 4]
+                
+                # For this specific pattern, combine first two as city name
+                city_name = row_data[0] + ' ' + row_data[1] if row_data[0] != row_data[1] else row_data[0]
+                year_month = row_data[2] if len(row_data) > 2 else row_data[1]
+                deliveries = row_data[3] if len(row_data) > 3 else row_data[2]
+                
+                # But wait, let's check the actual pattern in your data
+                # "Destination City YearMonth Total_Deliveries Faisalabad 2025-03 1450"
+                # Headers: ["Destination", "City", "YearMonth", "Total_Deliveries"] - but this should be 3 cols
+                # Let's try: ["Destination City", "YearMonth", "Total_Deliveries"] - 3 columns
+                pass
+    
+    # Try 3-column format with first column having space
+    if "Destination City" in content and "YearMonth" in content and "Total_Deliveries" in content:
+        # Find where headers end and data begins
+        header_part = "Destination City YearMonth Total_Deliveries"
+        if content.startswith(header_part):
+            data_part = content[len(header_part):].strip()
+            data_tokens = data_part.split()
+            
+            # Group into sets of 3: [City, YearMonth, Count]
+            if len(data_tokens) % 3 == 0 and len(data_tokens) >= 6:
+                headers = ["Destination City", "YearMonth", "Total_Deliveries"]
+                data_rows = []
+                
+                for i in range(0, len(data_tokens), 3):
+                    if i + 2 < len(data_tokens):
+                        city = data_tokens[i]
+                        year_month = data_tokens[i + 1]
+                        deliveries = data_tokens[i + 2]
+                        data_rows.append([city, year_month, deliveries])
+                
+                if len(data_rows) >= 2:
+                    return create_markdown_table(headers, data_rows), True
     
     return content, False
 
-def is_already_markdown_table(content):
-    """Check if content is already a markdown table"""
-    return (isinstance(content, str) and 
-            '|' in content and 
-            content.count('\n') > 1 and 
-            content.count('|') > 2)
-
-# Enhanced Message Display Code for Tables
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        content = message["content"]
-        message_type = message.get("type", "text")
+def create_markdown_table(headers, data_rows):
+    """Helper function to create markdown table from headers and data rows"""
+    # Create header row
+    header_row = '| ' + ' | '.join(headers) + ' |'
+    separator_row = '|' + '|'.join(['---' for _ in headers]) + '|'
+    
+    # Create data rows
+    table_rows = []
+    for row_data in data_rows:
+        # Ensure we have the right number of columns
+        while len(row_data) < len(headers):
+            row_data.append('')
+        row_data = row_data[:len(headers)]  # Trim if too many
         
-        # Check if it's already marked as a table or is already a markdown table
-        is_existing_table = (message_type == "table" or is_already_markdown_table(content))
-        
-        # Try to detect and convert patterns to tables
-        converted_content, is_converted_table = detect_and_convert_to_table(content)
-        
-        # Determine if we should display as table
-        should_display_as_table = is_existing_table or is_converted_table
-        
-        if should_display_as_table:
-            # Apply custom CSS for table styling
-            st.markdown("""
-            <style>
-            .stMarkdown table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 1rem 0;
-                font-size: 14px;
-            }
-            .stMarkdown th {
-                background-color: #f0f2f6;
-                color: #262730;
-                font-weight: 600;
-                padding: 0.5rem 1rem;
-                text-align: left;
-                border-bottom: 2px solid #e6e9ef;
-            }
-            .stMarkdown td {
-                padding: 0.5rem 1rem;
-                border-bottom: 1px solid #e6e9ef;
-                color: #262730;
-            }
-            .stMarkdown tr:nth-child(even) {
-                background-color: #f9f9fb;
-            }
-            .stMarkdown tr:hover {
-                background-color: #f0f2f6;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            # Display the table (use converted content if available)
-            table_content = converted_content if is_converted_table else content
-            st.markdown(table_content)
-            
-            # Show table info
-            if table_content.count('\n') > 1:
-                row_count = table_content.count('\n') - 1  # Subtract header row
-                st.caption(f"📊 Showing {row_count} rows")
-                
-            # Optional: Show original text if converted
-            if is_converted_table:
-                with st.expander("View Original Response"):
-                    st.text(content)
-                    
-        else:
-            # Display as regular text
-            st.write(content)
+        table_row = '| ' + ' | '.join(str(cell) for cell in row_data) + ' |'
+        table_rows.append(table_row)
+    
+    # Combine all parts
+    markdown_table = '\n'.join([header_row, separator_row] + table_rows)
+    return markdown_table
 
 def main():
     # Header
@@ -720,7 +746,7 @@ def main():
                         message_type = message.get("type", "text")
                         
                         # Check if it's already marked as a table or is already a markdown table
-                        is_existing_table = (message_type == "table" or is_already_markdown_table(content))
+                        is_existing_table = (message_type == "table" or create_markdown_table(content))
                         
                         # Try to detect and convert patterns to tables
                         converted_content, is_converted_table = detect_and_convert_to_table(content)
@@ -808,7 +834,7 @@ def main():
                                         "content": converted_content,
                                         "type": "table"
                                     })
-                                elif is_already_markdown_table(result):
+                                elif '|' in result and result.count('\n') > 1:
                                     # Already a markdown table
                                     st.session_state.messages.append({
                                         "role": "assistant",
@@ -823,8 +849,8 @@ def main():
                                         openai_api_key=st.session_state.api_key
                                     )
                                     
-                                    # Check if LLM created a table or try pattern detection on formatted response
-                                    if is_already_markdown_table(formatted):
+                                    # Check if LLM created a table
+                                    if '|' in formatted and formatted.count('\n') > 1 and formatted.count('|') > 2:
                                         st.session_state.messages.append({
                                             "role": "assistant",
                                             "content": formatted,
