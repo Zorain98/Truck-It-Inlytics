@@ -400,6 +400,170 @@ def reformat_output_with_llm(raw_response, user_query, openai_api_key):
             print(f"LLM reformatting failed: {e}")
             return raw_response  # Fallback to original response
 
+def detect_and_convert_to_table(content):
+    """
+    Detect patterns in text that should be converted to markdown tables
+    
+    Pattern: First line contains column names, subsequent lines contain data
+    Example: "Column1 Column2 Column3\nValue1 Value2 Value3\nValue4 Value5 Value6"
+    """
+    
+    if not isinstance(content, str):
+        return content, False
+    
+    lines = [line.strip() for line in content.strip().split('\n') if line.strip()]
+    
+    if len(lines) < 3:  # Need at least header + 2 data rows to consider it a table
+        return content, False
+    
+    # Check if first line could be headers (multiple words, no obvious data pattern)
+    first_line_words = lines[0].split()
+    
+    if len(first_line_words) < 2:  # Need at least 2 columns
+        return content, False
+    
+    # Try to detect if subsequent lines follow a consistent pattern
+    # Check if lines have the same number of "tokens" as the header
+    num_columns = len(first_line_words)
+    data_rows = []
+    
+    for i in range(1, len(lines)):
+        # Split the line into tokens
+        tokens = lines[i].split()
+        
+        # For cases where city names might have spaces, try different parsing strategies
+        if len(tokens) >= num_columns:
+            # Strategy 1: Last N tokens are values, rest is first column (for city names with spaces)
+            if num_columns == 2:  # Most common case: "City Name" + "Count"
+                # Take all but last token as city name, last token as count
+                city_parts = tokens[:-1]
+                count = tokens[-1]
+                
+                # Check if count looks like a number
+                try:
+                    float(count)  # Test if it's numeric
+                    row_data = [' '.join(city_parts), count]
+                    data_rows.append(row_data)
+                    continue
+                except ValueError:
+                    pass
+            
+            # Strategy 2: Exact number of columns
+            if len(tokens) == num_columns:
+                data_rows.append(tokens)
+                continue
+            
+            # Strategy 3: More tokens than columns - try to group appropriately
+            if len(tokens) > num_columns:
+                # Assume last (num_columns-1) tokens are data, rest form first column
+                num_data_cols = num_columns - 1
+                first_col = ' '.join(tokens[:-num_data_cols])
+                data_cols = tokens[-num_data_cols:]
+                row_data = [first_col] + data_cols
+                data_rows.append(row_data)
+                continue
+        
+        # If we can't parse this line consistently, it's probably not a table
+        return content, False
+    
+    # If we successfully parsed at least 2 data rows, create a table
+    if len(data_rows) >= 2:
+        # Create markdown table
+        headers = first_line_words
+        
+        # Create header row
+        header_row = '| ' + ' | '.join(headers) + ' |'
+        separator_row = '|' + '|'.join(['---' for _ in headers]) + '|'
+        
+        # Create data rows
+        table_rows = []
+        for row_data in data_rows:
+            # Ensure we have the right number of columns
+            while len(row_data) < len(headers):
+                row_data.append('')
+            row_data = row_data[:len(headers)]  # Trim if too many
+            
+            table_row = '| ' + ' | '.join(str(cell) for cell in row_data) + ' |'
+            table_rows.append(table_row)
+        
+        # Combine all parts
+        markdown_table = '\n'.join([header_row, separator_row] + table_rows)
+        return markdown_table, True
+    
+    return content, False
+
+def is_already_markdown_table(content):
+    """Check if content is already a markdown table"""
+    return (isinstance(content, str) and 
+            '|' in content and 
+            content.count('\n') > 1 and 
+            content.count('|') > 2)
+
+# Enhanced Message Display Code for Tables
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        content = message["content"]
+        message_type = message.get("type", "text")
+        
+        # Check if it's already marked as a table or is already a markdown table
+        is_existing_table = (message_type == "table" or is_already_markdown_table(content))
+        
+        # Try to detect and convert patterns to tables
+        converted_content, is_converted_table = detect_and_convert_to_table(content)
+        
+        # Determine if we should display as table
+        should_display_as_table = is_existing_table or is_converted_table
+        
+        if should_display_as_table:
+            # Apply custom CSS for table styling
+            st.markdown("""
+            <style>
+            .stMarkdown table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 1rem 0;
+                font-size: 14px;
+            }
+            .stMarkdown th {
+                background-color: #f0f2f6;
+                color: #262730;
+                font-weight: 600;
+                padding: 0.5rem 1rem;
+                text-align: left;
+                border-bottom: 2px solid #e6e9ef;
+            }
+            .stMarkdown td {
+                padding: 0.5rem 1rem;
+                border-bottom: 1px solid #e6e9ef;
+                color: #262730;
+            }
+            .stMarkdown tr:nth-child(even) {
+                background-color: #f9f9fb;
+            }
+            .stMarkdown tr:hover {
+                background-color: #f0f2f6;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Display the table (use converted content if available)
+            table_content = converted_content if is_converted_table else content
+            st.markdown(table_content)
+            
+            # Show table info
+            if table_content.count('\n') > 1:
+                row_count = table_content.count('\n') - 1  # Subtract header row
+                st.caption(f"📊 Showing {row_count} rows")
+                
+            # Optional: Show original text if converted
+            if is_converted_table:
+                with st.expander("View Original Response"):
+                    st.text(content)
+                    
+        else:
+            # Display as regular text
+            st.write(content)
+
 def main():
     # Header
     st.markdown("""
@@ -555,15 +719,17 @@ def main():
                         content = message["content"]
                         message_type = message.get("type", "text")
                         
-                        # Check if it's a table
-                        is_table = (
-                            message_type == "table" or 
-                            (isinstance(content, str) and '|' in content and 
-                            content.count('\n') > 1 and content.count('|') > 2)
-                        )
+                        # Check if it's already marked as a table or is already a markdown table
+                        is_existing_table = (message_type == "table" or is_already_markdown_table(content))
                         
-                        if is_table:
-                            # Use st.markdown() for table content with custom styling
+                        # Try to detect and convert patterns to tables
+                        converted_content, is_converted_table = detect_and_convert_to_table(content)
+                        
+                        # Determine if we should display as table
+                        should_display_as_table = is_existing_table or is_converted_table
+                        
+                        if should_display_as_table:
+                            # Apply custom CSS for table styling
                             st.markdown("""
                             <style>
                             .stMarkdown table {
@@ -594,22 +760,23 @@ def main():
                             </style>
                             """, unsafe_allow_html=True)
                             
-                            # Display the table
-                            st.markdown(content)
+                            # Display the table (use converted content if available)
+                            table_content = converted_content if is_converted_table else content
+                            st.markdown(table_content)
                             
-                            # Optional: Add table info
-                            if content.count('\n') > 1:
-                                row_count = content.count('\n') - 1  # Subtract header row
+                            # Show table info
+                            if table_content.count('\n') > 1:
+                                row_count = table_content.count('\n') - 1  # Subtract header row
                                 st.caption(f"📊 Showing {row_count} rows")
                                 
+                            # Optional: Show original text if converted
+                            if is_converted_table:
+                                with st.expander("View Original Response"):
+                                    st.text(content)
+                                    
                         else:
-                            # Use st.write() for regular text content
+                            # Display as regular text
                             st.write(content)
-                            
-                        # Optional: Add copy button for tables
-                        if is_table and st.button(f"📋 Copy Table", key=f"copy_{hash(content)}", help="Copy table to clipboard"):
-                            st.code(content, language="markdown")
-                            st.success("Table copied as Markdown! You can paste it anywhere.")
                 
                 # Chat input
                 if query := st.chat_input("Ask me anything about your data..."):
@@ -621,22 +788,28 @@ def main():
                             
                             result = st.session_state.smart_df.chat(query)
                             
-                            # Debug: Print what PandasAI returns (optional - remove in production)
-                            print(f"PandasAI Result Type: {type(result)}")
-                            print(f"PandasAI Result Content: {str(result)[:200]}...")
-
                             if isinstance(result, pd.DataFrame):
-                                # Convert DataFrame to markdown table
+                                # Direct DataFrame response
                                 markdown_table = result.head(20).to_markdown(index=False)
                                 st.session_state.messages.append({
                                     "role": "assistant",
                                     "content": markdown_table,
-                                    "type": "table"  # Flag to identify table content
+                                    "type": "table"
                                 })
                                 
                             elif isinstance(result, str):
-                                # Check if it's already a markdown table
-                                if '|' in result and result.count('\n') > 1:
+                                # First, try pattern detection on raw result
+                                converted_content, is_pattern_table = detect_and_convert_to_table(result)
+                                
+                                if is_pattern_table:
+                                    # Pattern detected, save as table
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": converted_content,
+                                        "type": "table"
+                                    })
+                                elif is_already_markdown_table(result):
+                                    # Already a markdown table
                                     st.session_state.messages.append({
                                         "role": "assistant",
                                         "content": result,
@@ -650,22 +823,28 @@ def main():
                                         openai_api_key=st.session_state.api_key
                                     )
                                     
-                                    # Debug: Print formatted response (optional - remove in production)
-                                    print(f"Formatted Response: {formatted[:200]}...")
-                                    
-                                    # Check if formatted response is a table
-                                    if '|' in formatted and formatted.count('\n') > 1 and formatted.count('|') > 2:
+                                    # Check if LLM created a table or try pattern detection on formatted response
+                                    if is_already_markdown_table(formatted):
                                         st.session_state.messages.append({
                                             "role": "assistant",
                                             "content": formatted,
                                             "type": "table"
                                         })
                                     else:
-                                        st.session_state.messages.append({
-                                            "role": "assistant",
-                                            "content": formatted,
-                                            "type": "text"
-                                        })
+                                        # Try pattern detection on LLM formatted response
+                                        converted_formatted, is_formatted_pattern = detect_and_convert_to_table(formatted)
+                                        if is_formatted_pattern:
+                                            st.session_state.messages.append({
+                                                "role": "assistant",
+                                                "content": converted_formatted,
+                                                "type": "table"
+                                            })
+                                        else:
+                                            st.session_state.messages.append({
+                                                "role": "assistant",
+                                                "content": formatted,
+                                                "type": "text"
+                                            })
                                 else:
                                     # Short string responses
                                     st.session_state.messages.append({
