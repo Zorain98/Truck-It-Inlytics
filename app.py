@@ -746,7 +746,7 @@ def main():
                         message_type = message.get("type", "text")
                         
                         # Check if it's already marked as a table or is already a markdown table
-                        is_existing_table = (message_type == "table" or create_markdown_table(content))
+                        is_existing_table = (message_type == "table")
                         
                         # Try to detect and convert patterns to tables
                         converted_content, is_converted_table = detect_and_convert_to_table(content)
@@ -907,3 +907,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
